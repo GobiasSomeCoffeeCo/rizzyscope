@@ -1,0 +1,8 @@
+[required]
+mac = "12:34:56:AA:CC:EE"
+interface = "wlp0s20f0u1u3"
+
+# Kismet Credentials
+[credentials]
+user = "test"
+password = "test"
