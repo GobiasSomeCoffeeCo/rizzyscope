@@ -38,17 +38,7 @@ If you prefer, you can build Rizzyscope from source:
    git clone https://github.com/yourusername/rizzyscope.git
    cd rizzyscope
    ```
-
-
-If you prefer, you can build Rizzyscope from source:
-
-Clone the repository:
-
-```bash
-
-git clone https://github.com/GobiasSomeCoffeeCo/rizzyscope.git
-cd rizzyscope
-```
+   
 Build the program:
 
 ```bash
