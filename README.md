@@ -42,9 +42,9 @@ If you prefer, you can build Rizzyscope from source:
 
 If you prefer, you can build Rizzyscope from source:
 
-    Clone the repository:
+Clone the repository:
 
-    ```bash
+```bash
 
 git clone https://github.com/GobiasSomeCoffeeCo/rizzyscope.git
 cd rizzyscope
@@ -53,7 +53,7 @@ Build the program:
 
 ```bash
 
-    go build -o rizzyscope
+go build -o rizzyscope
 ```
 ## Usage
 ### Running the Program
