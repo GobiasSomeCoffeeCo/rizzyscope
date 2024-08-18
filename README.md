@@ -37,6 +37,7 @@ If you prefer, you can build Rizzyscope from source:
    ```bash
    git clone https://github.com/yourusername/rizzyscope.git
    cd rizzyscope
+   ```
 
 
 If you prefer, you can build Rizzyscope from source:
