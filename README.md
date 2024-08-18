@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Rizzyscope** is a powerful tool designed to interact with the Kismet wireless network detector. It allows users to monitor the RSSI (Received Signal Strength Indicator) of a specific MAC address on a specified network interface. The program leverages configuration files and command-line arguments for flexibility and ease of use.
+**Rizzyscope** is a tool designed to interact with the Kismet wireless network detector. It allows users to monitor the RSSI (Received Signal Strength Indicator) of a specific MAC address on a specified network interface. The program leverages configuration files and command-line arguments for flexibility and ease of use.
 
 ## Features
 
