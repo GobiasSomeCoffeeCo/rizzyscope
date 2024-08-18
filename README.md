@@ -36,10 +36,10 @@ You can download the latest version of Rizzyscope from the [Releases](https://gi
 If you prefer, you can build Rizzyscope from source:
 
 1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/yourusername/rizzyscope.git
-   cd rizzyscope
-   ```
+```bash
+git clone https://github.com/GobiasSomeCoffeeCo/rizzyscope.git
+cd rizzyscope
+```
    
 Build the program:
 
