@@ -27,21 +27,24 @@ const (
 	interval  = 500 * time.Millisecond // Query interval
 	decayRate = 10                     // Rate at which RSSI decays if no new data
 	minRSSI   = -120                   // Minimum RSSI value for progress bar
-	maxRSSI   = -30                    // Maximum RSSI value for progress bar
+	maxRSSI   = -20                    // Maximum RSSI value for progress bar
 )
 
 var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render
 
 // Model struct
 type model struct {
-	progress     progress.Model
-	rssi         int
-	lastReceived time.Time // Time when the last RSSI value was received
-	mac          string
-	channel      string
-	once         sync.Once
-	iface        string
-	kismet       *exec.Cmd
+	progress      progress.Model
+	rssi          int
+	lastReceived  time.Time // Time when the last RSSI value was received
+	mac           []string
+	lockedMac     string
+	ignoreList    []string
+	channel       string
+	once          sync.Once
+	channelLocked bool
+	iface         string
+	kismet        *exec.Cmd
 }
 
 // Tick message to trigger updates
@@ -50,6 +53,75 @@ type tickMsg time.Time
 // API response structure
 type KismetPayload struct {
 	Fields [][]string `json:"fields"`
+}
+
+// Function to find a valid MAC from the list of target MACs
+func findValidMac(macs []string, ignoreMacs []string) (string, string) {
+	postJson := KismetPayload{
+		Fields: [][]string{
+			{"kismet.device.base.macaddr", "base.macaddr"},
+			{"kismet.device.base.channel", "base.channel"},
+		},
+	}
+
+	jsonData, err := json.Marshal(postJson)
+	if err != nil {
+		fmt.Println("Error marshaling JSON:", err)
+		return "", ""
+	}
+
+	req, err := createRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Println(err)
+		return "", ""
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Error making request: %v \n\rplease make sure Kismet is on and running.\n\r", err)
+		return "", ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		var devices []map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
+			fmt.Println("Error decoding response:", err)
+			return "", ""
+		}
+
+		// Loop through all MAC addresses and find the first valid one
+		for _, mac := range macs {
+			// Skip ignored MAC addresses
+			if contains(ignoreMacs, mac) {
+				continue
+			}
+
+			// Check if the device matches one of the target MAC addresses
+			for _, device := range devices {
+				if device["base.macaddr"].(string) == mac {
+					// Return the first valid MAC address and its channel
+					channel, ok := device["base.channel"].(string)
+					if ok {
+						return mac, channel
+					}
+				}
+			}
+		}
+	}
+	// Return empty if no valid MAC is found
+	return "", ""
+}
+
+// Helper function to check if a MAC is in the ignore list
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
 
 // Function to get credentials from configuration
@@ -190,55 +262,100 @@ func getUUIDForInterface(interfaceName string) (string, error) {
 	return "", fmt.Errorf("UUID not found for interface %s", interfaceName)
 }
 
+func hopChannel(uuid string) error {
+
+	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_hop.cmd", uuid)
+
+	req, err := createRequest("POST", url, nil)
+	if err != nil {
+		fmt.Printf("failed to create request: %v\n", err)
+		return fmt.Errorf("failed to create request: %v\n", err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("failed to send request: %v\n", err)
+		return fmt.Errorf("failed to send request: %v\n", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("failed to unlock channel: %s\n", string(body))
+		return fmt.Errorf("failed to unlock channel: %s\n", string(body))
+	}
+
+	fmt.Println("Channel unlock successful.")
+
+	return nil
+
+}
+
 // Function to lock the channel for a specific interface UUID
-func lockChannel(uuid, channel string, once *sync.Once) error {
-	once.Do(func() {
+func lockChannel(uuid, channel string) error {
 		url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_channel.cmd", uuid)
 
 		payload := map[string]string{"channel": channel}
 		jsonData, err := json.Marshal(payload)
 		if err != nil {
 			fmt.Printf("failed to marshal JSON: %v\n", err)
-			return
+			return fmt.Errorf("failed to marshal JSON: %v", err)
 		}
 
 		req, err := createRequest("POST", url, bytes.NewBuffer(jsonData))
 		if err != nil {
 			fmt.Printf("failed to create request: %v\n", err)
-			return
+			return fmt.Errorf("failed to create request: %v", err)
 		}
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Printf("failed to send request: %v\n", err)
-			return
+			return fmt.Errorf("failed to send request: %v", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			fmt.Printf("failed to lock channel: %s\n", string(body))
-			return
+			return fmt.Errorf("failed to lock channel: %s", string(body))
 		}
 
 		fmt.Println("Channel locked successfully.")
-	})
+	
 
 	return nil
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tickCmd()
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	uuid, err := getUUIDForInterface(m.iface)
+	if err != nil {
+		fmt.Println("Failed to get UUID:", err)
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q": // Handle Ctrl+C and 'q' to quit
 			m.kismet.Process.Kill()
 			return m, tea.Quit
+		case "i":
+			// If a MAC is locked, add it to the ignore list
+			if m.lockedMac != "" {
+				m.ignoreList = append(m.ignoreList, m.lockedMac) // Add current locked MAC to ignore list
+				fmt.Printf("MAC %s added to ignore list\n", m.lockedMac)
+				m.lockedMac = "" // Clear the locked MAC
+				m.channel = "" 
+				m.channelLocked = false  // Clear the channel
+			}
+			// Continue channel hopping
+			hopChannel(uuid)
+			return m, nil
 		default:
 			// Handle other keys or do nothing
 			return m, nil
@@ -252,22 +369,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		newRSSI, newChannel := fetchRSSIData(m.mac)
+		if m.lockedMac == "" {
+			// Find a valid MAC to lock onto if none is locked
+			m.lockedMac, m.channel = findValidMac(m.mac, m.ignoreList)
+			m.channelLocked = false // Set this to false because we're locking a new MAC
+		}
+
+		newRSSI, newChannel := fetchRSSIData(m.lockedMac)
 
 		if newRSSI != minRSSI && newChannel != "" {
 			m.rssi = newRSSI
 			m.channel = newChannel
 			m.lastReceived = time.Now()
 
-			uuid, err := getUUIDForInterface(m.iface)
-			if err != nil {
-				fmt.Println("Failed to get UUID:", err)
-			} else {
-				if err := lockChannel(uuid, newChannel, &m.once); err != nil {
+			// Only lock the channel if it's not already locked to the current MAC and channel
+			if !m.channelLocked {
+				fmt.Printf("Locking MAC %s on channel %s\n", m.lockedMac, newChannel)
+
+				if err := lockChannel(uuid, newChannel); err != nil {
 					fmt.Println("Failed to lock channel:", err)
+				} else {
+					m.channelLocked = true // Set the flag to indicate the channel is now locked
 				}
 			}
 		} else if time.Since(m.lastReceived) > timeout {
+			// Decay the RSSI if no new data
 			if m.rssi > minRSSI {
 				m.rssi -= decayRate
 				if m.rssi < minRSSI {
@@ -297,7 +423,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) View() string {
+func (m *model) View() string {
 	pad := strings.Repeat(" ", padding)
 	progressBar := m.progress.View()
 	rssiString := fmt.Sprintf(" %d dBm", m.rssi)
@@ -305,15 +431,15 @@ func (m model) View() string {
 
 	view := "\n" + pad + fullProgressBar + "\n\n"
 
-	if m.mac != "" {
-		view += pad + fmt.Sprintf("MAC: %s\n", m.mac)
+	if m.lockedMac != "" {
+		view += pad + fmt.Sprintf("MAC: %s\n", m.lockedMac)
 	}
 
 	if m.channel != "" { // Only add the channel line if it's not empty
 		view += pad + fmt.Sprintf("Channel: %s\n", m.channel)
 	}
 
-	view += pad + helpStyle("Press ctrl+c to quit")
+	view += pad + helpStyle("Press 'ctrl+c' to quit\n  Press 'i' to ignore current mac and continue searching")
 
 	return view
 }
@@ -331,7 +457,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	pflag.StringP("mac", "m", "", "MAC address of the device")
+	pflag.StringSliceP("mac", "m", []string{}, "MAC address(es) of the device(s), comma-separated")
 	pflag.StringP("interface", "i", "", "Interface name")
 	pflag.StringP("config", "c", "", "Path to config file")
 	pflag.Parse()
@@ -370,7 +496,7 @@ func main() {
 		progress:     progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage()),
 		rssi:         minRSSI,
 		lastReceived: time.Now(),
-		mac:          viper.GetString("required.mac"),
+		mac:          viper.GetStringSlice("required.target_mac"),
 		iface:        viper.GetString("required.interface"),
 	}
 
@@ -384,7 +510,7 @@ func main() {
 
 	time.Sleep(3 * time.Second)
 
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	if _, err := tea.NewProgram(&m).Run(); err != nil {
 		fmt.Println("Oh no!", err)
 		os.Exit(1)
 	}
