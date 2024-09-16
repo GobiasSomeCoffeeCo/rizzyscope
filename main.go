@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 
 	"time"
 
@@ -41,7 +40,6 @@ type model struct {
 	lockedMac     string
 	ignoreList    []string
 	channel       string
-	once          sync.Once
 	channelLocked bool
 	iface         string
 	kismet        *exec.Cmd
@@ -268,22 +266,22 @@ func hopChannel(uuid string) error {
 
 	req, err := createRequest("POST", url, nil)
 	if err != nil {
-		fmt.Printf("failed to create request: %v\n", err)
-		return fmt.Errorf("failed to create request: %v\n", err)
+		fmt.Printf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %v", err)
 	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("failed to send request: %v\n", err)
-		return fmt.Errorf("failed to send request: %v\n", err)
+		return fmt.Errorf("failed to send request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Printf("failed to unlock channel: %s\n", string(body))
-		return fmt.Errorf("failed to unlock channel: %s\n", string(body))
+		return fmt.Errorf("failed to unlock channel: %s", string(body))
 	}
 
 	fmt.Println("Channel unlock successful.")
@@ -294,37 +292,36 @@ func hopChannel(uuid string) error {
 
 // Function to lock the channel for a specific interface UUID
 func lockChannel(uuid, channel string) error {
-		url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_channel.cmd", uuid)
+	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_channel.cmd", uuid)
 
-		payload := map[string]string{"channel": channel}
-		jsonData, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Printf("failed to marshal JSON: %v\n", err)
-			return fmt.Errorf("failed to marshal JSON: %v", err)
-		}
+	payload := map[string]string{"channel": channel}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Printf("failed to marshal JSON: %v\n", err)
+		return fmt.Errorf("failed to marshal JSON: %v", err)
+	}
 
-		req, err := createRequest("POST", url, bytes.NewBuffer(jsonData))
-		if err != nil {
-			fmt.Printf("failed to create request: %v\n", err)
-			return fmt.Errorf("failed to create request: %v", err)
-		}
+	req, err := createRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("failed to create request: %v\n", err)
+		return fmt.Errorf("failed to create request: %v", err)
+	}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			fmt.Printf("failed to send request: %v\n", err)
-			return fmt.Errorf("failed to send request: %v", err)
-		}
-		defer resp.Body.Close()
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("failed to send request: %v\n", err)
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			fmt.Printf("failed to lock channel: %s\n", string(body))
-			return fmt.Errorf("failed to lock channel: %s", string(body))
-		}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("failed to lock channel: %s\n", string(body))
+		return fmt.Errorf("failed to lock channel: %s", string(body))
+	}
 
-		fmt.Println("Channel locked successfully.")
-	
+	fmt.Println("Channel locked successfully.")
 
 	return nil
 }
@@ -350,8 +347,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ignoreList = append(m.ignoreList, m.lockedMac) // Add current locked MAC to ignore list
 				fmt.Printf("MAC %s added to ignore list\n", m.lockedMac)
 				m.lockedMac = "" // Clear the locked MAC
-				m.channel = "" 
-				m.channelLocked = false  // Clear the channel
+				m.channel = ""
+				m.channelLocked = false // Clear the channel
 			}
 			// Continue channel hopping
 			hopChannel(uuid)
