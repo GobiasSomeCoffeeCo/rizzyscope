@@ -244,7 +244,7 @@ func hopChannel(uuid string) error {
 		return fmt.Errorf("failed to unlock channel: %s", string(body))
 	}
 
-	fmt.Println("Channel unlock successful.")
+	//fmt.Println("Channel unlock successful.")
 
 	return nil
 
@@ -281,7 +281,7 @@ func lockChannel(uuid, channel string) error {
 		return fmt.Errorf("failed to lock channel: %s", string(body))
 	}
 
-	fmt.Println("Channel locked successfully.")
+	//fmt.Println("Channel locked successfully.")
 
 	return nil
 }

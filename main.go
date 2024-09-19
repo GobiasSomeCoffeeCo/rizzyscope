@@ -129,7 +129,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastReceived = time.Now()
 
 			if !m.channelLocked {
-				fmt.Printf("Locking MAC %s on channel %s\n", m.lockedMac, newChannel)
+				m.realTimeOutput = fmt.Sprintf("Locking MAC %s on channel %s\n", m.lockedMac, newChannel)
 
 				if err := lockChannel(uuid, newChannel); err != nil {
 					fmt.Println("Failed to lock channel:", err)
