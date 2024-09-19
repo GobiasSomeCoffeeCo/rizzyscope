@@ -1,22 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"os/exec"
-	"strings"
-
-	"time"
-
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"os"
+	"os/exec"
+	"time"
 )
 
 const (
@@ -29,301 +23,33 @@ const (
 	maxRSSI   = -20                    // Maximum RSSI value for progress bar
 )
 
-var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render
+//var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render
 
-// Model struct
-type model struct {
-	progress      progress.Model
-	rssi          int
-	lastReceived  time.Time // Time when the last RSSI value was received
-	mac           []string
-	lockedMac     string
-	ignoreList    []string
-	channel       string
-	channelLocked bool
-	iface         string
-	kismet        *exec.Cmd
-}
-
-// Tick message to trigger updates
 type tickMsg time.Time
 
-// API response structure
-type KismetPayload struct {
-	Fields [][]string `json:"fields"`
+type MACItem struct {
+	mac    string
+	locked bool
 }
 
-// Function to find a valid MAC from the list of target MACs
-func findValidMac(macs []string, ignoreMacs []string) (string, string) {
-	postJson := KismetPayload{
-		Fields: [][]string{
-			{"kismet.device.base.macaddr", "base.macaddr"},
-			{"kismet.device.base.channel", "base.channel"},
-		},
-	}
+func (i MACItem) Title() string       { return i.mac }
+func (i MACItem) Description() string { return "" }
+func (i MACItem) FilterValue() string { return i.mac }
 
-	jsonData, err := json.Marshal(postJson)
-	if err != nil {
-		fmt.Println("Error marshaling JSON:", err)
-		return "", ""
-	}
-
-	req, err := createRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println(err)
-		return "", ""
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error making request: %v \n\rplease make sure Kismet is on and running.\n\r", err)
-		return "", ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		var devices []map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
-			fmt.Println("Error decoding response:", err)
-			return "", ""
-		}
-
-		// Loop through all MAC addresses and find the first valid one
-		for _, mac := range macs {
-			// Skip ignored MAC addresses
-			if contains(ignoreMacs, mac) {
-				continue
-			}
-
-			// Check if the device matches one of the target MAC addresses
-			for _, device := range devices {
-				if device["base.macaddr"].(string) == mac {
-					// Return the first valid MAC address and its channel
-					channel, ok := device["base.channel"].(string)
-					if ok {
-						return mac, channel
-					}
-				}
-			}
-		}
-	}
-	// Return empty if no valid MAC is found
-	return "", ""
-}
-
-// Helper function to check if a MAC is in the ignore list
-func contains(slice []string, item string) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
-	}
-	return false
-}
-
-// Function to get credentials from configuration
-func getCredentials() (string, string, error) {
-	user := viper.GetString("credentials.user")
-	password := viper.GetString("credentials.password")
-
-	if user == "" || password == "" {
-		return "", "", fmt.Errorf("user or password not provided in the configuration")
-	}
-
-	return user, password, nil
-}
-
-func launchKismet(iface string) (*exec.Cmd, error) {
-	fmt.Println("🚀 Launching Kismet...")
-
-	// kismetDevice := viper.GetString("interface")
-	cmd := exec.Command("kismet", "-c", iface)
-
-	// Redirecting stdout and stderr to /dev/null to suppress output
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return cmd, fmt.Errorf("failed to start Kismet: %v", err)
-	}
-
-	fmt.Println("💥 Launched Kismet")
-
-	return cmd, nil
-}
-
-// Function to create an HTTP request with credentials
-func createRequest(method, url string, body io.Reader) (*http.Request, error) {
-	user, password, err := getCredentials()
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	q := req.URL.Query()
-	q.Add("user", user)
-	q.Add("password", password)
-	req.URL.RawQuery = q.Encode()
-
-	req.Header.Set("Content-Type", "application/json")
-	return req, nil
-}
-
-// Function to fetch RSSI and channel data from Kismet
-func fetchRSSIData(mac string) (int, string) {
-	postJson := KismetPayload{
-		Fields: [][]string{
-			{"kismet.device.base.macaddr", "base.macaddr"},
-			{"kismet.device.base.channel", "base.channel"},
-			{"kismet.device.base.signal/kismet.common.signal.last_signal", "RSSI"},
-		},
-	}
-
-	jsonData, err := json.Marshal(postJson)
-	if err != nil {
-		fmt.Println("Error marshaling JSON:", err)
-		return minRSSI, ""
-	}
-
-	req, err := createRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println(err)
-		return minRSSI, ""
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error making request: %v \n\rplease make sure kismet is on and running.\n\r", err)
-		return minRSSI, ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		var devices []map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
-			fmt.Println("Error decoding response:", err)
-			return minRSSI, ""
-		}
-
-		for _, device := range devices {
-			if device["base.macaddr"].(string) == mac {
-				rssi, ok := device["RSSI"].(float64)
-				channel, ok2 := device["base.channel"].(string)
-				if ok && ok2 {
-					return int(rssi), channel
-				}
-			}
-		}
-	}
-	return minRSSI, ""
-}
-
-func getUUIDForInterface(interfaceName string) (string, error) {
-	req, err := createRequest("GET", "http://127.0.0.1:2501/datasource/all_sources.json", nil)
-	if err != nil {
-		return "", err
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to get data sources: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("failed to get data sources: %s", string(body))
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var sources []map[string]interface{}
-	if err := json.Unmarshal(body, &sources); err != nil {
-		return "", fmt.Errorf("failed to decode JSON: %v", err)
-	}
-
-	for _, source := range sources {
-		if source["kismet.datasource.interface"] == interfaceName {
-			if uuid, ok := source["kismet.datasource.uuid"].(string); ok {
-				return uuid, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("UUID not found for interface %s", interfaceName)
-}
-
-func hopChannel(uuid string) error {
-
-	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_hop.cmd", uuid)
-
-	req, err := createRequest("POST", url, nil)
-	if err != nil {
-		fmt.Printf("failed to create request: %v", err)
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("failed to send request: %v\n", err)
-		return fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("failed to unlock channel: %s\n", string(body))
-		return fmt.Errorf("failed to unlock channel: %s", string(body))
-	}
-
-	fmt.Println("Channel unlock successful.")
-
-	return nil
-
-}
-
-// Function to lock the channel for a specific interface UUID
-func lockChannel(uuid, channel string) error {
-	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_channel.cmd", uuid)
-
-	payload := map[string]string{"channel": channel}
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		fmt.Printf("failed to marshal JSON: %v\n", err)
-		return fmt.Errorf("failed to marshal JSON: %v", err)
-	}
-
-	req, err := createRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Printf("failed to create request: %v\n", err)
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("failed to send request: %v\n", err)
-		return fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("failed to lock channel: %s\n", string(body))
-		return fmt.Errorf("failed to lock channel: %s", string(body))
-	}
-
-	fmt.Println("Channel locked successfully.")
-
-	return nil
+type model struct {
+	progress       progress.Model
+	rssi           int
+	mac            []string
+	lockedMac      string
+	channel        string
+	ignoreList     []string
+	iface          string
+	lastReceived   time.Time
+	kismet         *exec.Cmd
+	channelLocked  bool
+	realTimeOutput string
+	windowWidth    int
+	macList        list.Model
 }
 
 func (m *model) Init() tea.Cmd {
@@ -331,66 +57,88 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	uuid, err := getUUIDForInterface(m.iface)
+	uuid, err := GetUUIDForInterface(m.iface)
 	if err != nil {
 		fmt.Println("Failed to get UUID:", err)
 	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q": // Handle Ctrl+C and 'q' to quit
+		case "ctrl+c", "q":
 			m.kismet.Process.Kill()
 			return m, tea.Quit
-		case "i":
-			// If a MAC is locked, add it to the ignore list
-			if m.lockedMac != "" {
-				m.ignoreList = append(m.ignoreList, m.lockedMac) // Add current locked MAC to ignore list
-				fmt.Printf("MAC %s added to ignore list\n", m.lockedMac)
-				m.lockedMac = "" // Clear the locked MAC
-				m.channel = ""
-				m.channelLocked = false // Clear the channel
+		case "up", "k":
+
+			var cmd tea.Cmd
+			m.macList, cmd = m.macList.Update(msg)
+			return m, cmd
+		case "down", "j":
+
+			var cmd tea.Cmd
+			m.macList, cmd = m.macList.Update(msg)
+			return m, cmd
+		case "enter":
+
+			if selectedItem, ok := m.macList.SelectedItem().(MACItem); ok {
+				m.realTimeOutput = fmt.Sprintf("Switching to MAC: %s\n", selectedItem.mac)
+
+				m.lockedMac = selectedItem.mac
+				m.channelLocked = false
+
+				hopChannel(uuid)
+
+				m.realTimeOutput = fmt.Sprintf("Searching for MAC %s...\n", selectedItem.mac)
 			}
-			// Continue channel hopping
+			return m, nil
+		case "i":
+
+			if m.lockedMac != "" {
+				m.ignoreList = append(m.ignoreList, m.lockedMac)
+				fmt.Printf("MAC %s added to ignore list\n", m.lockedMac)
+				m.lockedMac = ""
+				m.channel = ""
+				m.channelLocked = false
+			}
 			hopChannel(uuid)
 			return m, nil
 		default:
-			// Handle other keys or do nothing
 			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
-		m.progress.Width = msg.Width - padding*2 - 4
+		m.windowWidth = msg.Width
+		m.progress.Width = msg.Width/2 - padding*2 - 4
 		if m.progress.Width > maxWidth {
 			m.progress.Width = maxWidth
 		}
+		m.macList.SetWidth(m.windowWidth/2 - 2)
 		return m, nil
 
 	case tickMsg:
 		if m.lockedMac == "" {
-			// Find a valid MAC to lock onto if none is locked
-			m.lockedMac, m.channel = findValidMac(m.mac, m.ignoreList)
-			m.channelLocked = false // Set this to false because we're locking a new MAC
+			m.lockedMac, m.channel = FindValidMac(m.mac, m.ignoreList)
+			m.channelLocked = false
 		}
 
-		newRSSI, newChannel := fetchRSSIData(m.lockedMac)
+		newRSSI, newChannel := FetchRSSIData(m.lockedMac)
 
 		if newRSSI != minRSSI && newChannel != "" {
 			m.rssi = newRSSI
 			m.channel = newChannel
 			m.lastReceived = time.Now()
 
-			// Only lock the channel if it's not already locked to the current MAC and channel
 			if !m.channelLocked {
 				fmt.Printf("Locking MAC %s on channel %s\n", m.lockedMac, newChannel)
 
 				if err := lockChannel(uuid, newChannel); err != nil {
 					fmt.Println("Failed to lock channel:", err)
 				} else {
-					m.channelLocked = true // Set the flag to indicate the channel is now locked
+					m.channelLocked = true
+					m.realTimeOutput = fmt.Sprintf("Locked MAC %s on channel %s\n", m.lockedMac, newChannel)
 				}
 			}
 		} else if time.Since(m.lastReceived) > timeout {
-			// Decay the RSSI if no new data
 			if m.rssi > minRSSI {
 				m.rssi -= decayRate
 				if m.rssi < minRSSI {
@@ -421,24 +169,67 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
-	pad := strings.Repeat(" ", padding)
-	progressBar := m.progress.View()
-	rssiString := fmt.Sprintf(" %d dBm", m.rssi)
-	fullProgressBar := progressBar + rssiString
 
-	view := "\n" + pad + fullProgressBar + "\n\n"
+	topPaneWidth := m.windowWidth / 2
 
-	if m.lockedMac != "" {
-		view += pad + fmt.Sprintf("MAC: %s\n", m.lockedMac)
-	}
+	topLeft := m.renderMacList(topPaneWidth)
 
-	if m.channel != "" { // Only add the channel line if it's not empty
-		view += pad + fmt.Sprintf("Channel: %s\n", m.channel)
-	}
+	topRight := m.renderRSSIProgressBar(topPaneWidth)
 
-	view += pad + helpStyle("Press 'ctrl+c' to quit\n  Press 'i' to ignore current mac and continue searching")
+	bottom := renderPane("Real-Time Output", m.realTimeOutput, m.windowWidth)
+
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
+	view := lipgloss.JoinVertical(lipgloss.Top, topRow, bottom)
 
 	return view
+}
+
+func (m *model) renderRSSIProgressBar(width int) string {
+	rssiLabel := fmt.Sprintf("RSSI: %d dBm", m.rssi)
+	progressBar := m.progress.View()
+
+	rssiDisplay := fmt.Sprintf("%s\n%s", rssiLabel, progressBar)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width).
+		Render(rssiDisplay)
+}
+
+func renderPane(title, content string, width int) string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width)
+
+	header := lipgloss.NewStyle().Bold(true).Render(title)
+	body := lipgloss.NewStyle().Render(content)
+
+	return style.Render(header + "\n" + body)
+}
+
+// Render MAC list pane with scrolling and selecting
+func (m *model) renderMacList(width int) string {
+	listTitle := "Target MACs"
+
+	var macItems []list.Item
+	for _, mac := range m.mac {
+		macItems = append(macItems, MACItem{mac: mac, locked: mac == m.lockedMac})
+	}
+
+	m.macList.SetItems(macItems)
+
+	header := lipgloss.NewStyle().Bold(true).Render(listTitle)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width).
+		Render(header + "\n" + m.macList.View())
 }
 
 func tickCmd() tea.Cmd {
@@ -446,20 +237,17 @@ func tickCmd() tea.Cmd {
 		return tickMsg(t)
 	})
 }
-
 func main() {
-
 	if os.Geteuid() != 0 {
 		fmt.Println("Run as root...")
 		os.Exit(1)
 	}
 
-	pflag.StringSliceP("mac", "m", []string{}, "MAC address(es) of the device(s), comma-separated")
+	pflag.StringSliceP("mac", "m", []string{}, "MAC address(es) of the device(s)")
 	pflag.StringP("interface", "i", "", "Interface name")
 	pflag.StringP("config", "c", "", "Path to config file")
 	pflag.Parse()
 
-	// If no config file is specified via the command line, look for config.toml in the current directory
 	configPath := viper.GetString("config")
 	if configPath == "" {
 		viper.SetConfigName("config")
@@ -469,37 +257,28 @@ func main() {
 		viper.SetConfigFile(configPath)
 	}
 
-	// Load the configuration file
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Println("Error reading config file:", err)
 		os.Exit(1)
 	}
 
-	// After loading the config file, bind the flags to override if provided
 	viper.BindPFlag("required.mac", pflag.Lookup("mac"))
 	viper.BindPFlag("required.interface", pflag.Lookup("interface"))
 
-	// Retrieve the credentials from the config
-	user := viper.GetString("credentials.user")
-	password := viper.GetString("credentials.password")
-
-	if user == "" || password == "" {
-		fmt.Println("Username or password missing in the configuration")
-		os.Exit(1)
-	}
-
-	// Initialize the model with the correct configuration paths
 	m := model{
-		progress:     progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage()),
-		rssi:         minRSSI,
-		lastReceived: time.Now(),
-		mac:          viper.GetStringSlice("required.target_mac"),
-		iface:        viper.GetString("required.interface"),
+		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
+		rssi:           minRSSI,
+		lastReceived:   time.Now(),
+		mac:            viper.GetStringSlice("required.target_mac"),
+		iface:          viper.GetString("required.interface"),
+		realTimeOutput: "",
+		windowWidth:    80,
+		macList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
 	}
 
-	kismet, err := launchKismet(m.iface)
+	kismet, err := LaunchKismet(m.iface)
 	if err != nil {
-		fmt.Println("Kismet couldn't launch. Check that the interface is correct.")
+		fmt.Println("Kismet couldn't launch. Check the interface.")
 		os.Exit(1)
 	}
 
@@ -508,7 +287,7 @@ func main() {
 	time.Sleep(3 * time.Second)
 
 	if _, err := tea.NewProgram(&m).Run(); err != nil {
-		fmt.Println("Oh no!", err)
+		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
 }
