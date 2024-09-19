@@ -95,9 +95,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.lockedMac != "" {
 				m.ignoreList = append(m.ignoreList, m.lockedMac)
-				fmt.Printf("MAC %s added to ignore list\n", m.lockedMac)
+				m.realTimeOutput = fmt.Sprintf("MAC %s added to ignore list\n", m.lockedMac)
 				m.lockedMac = ""
 				m.channel = ""
+				m.realTimeOutput = fmt.Sprintln("Continuing search for new target MAC...")
 				m.channelLocked = false
 			}
 			hopChannel(uuid)
@@ -169,19 +170,60 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
-
+	// Calculate the widths for the top two panes (50/50 split)
 	topPaneWidth := m.windowWidth / 2
 
-	topLeft := m.renderMacList(topPaneWidth)
+	topLeft := m.renderMacListWithHelp(topPaneWidth)
 
 	topRight := m.renderRSSIProgressBar(topPaneWidth)
 
 	bottom := renderPane("Real-Time Output", m.realTimeOutput, m.windowWidth)
 
+	m.macList.SetShowHelp(false)
+
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
 	view := lipgloss.JoinVertical(lipgloss.Top, topRow, bottom)
 
 	return view
+}
+
+// Render MAC list pane with custom help text
+func (m *model) renderMacListWithHelp(width int) string {
+	listTitle := "Target MACs"
+
+	// Populate the MAC list with items
+	var macItems []list.Item
+	for _, mac := range m.mac {
+		macItems = append(macItems, MACItem{mac: mac, locked: mac == m.lockedMac})
+	}
+
+	// Set the list model's items
+	m.macList.SetItems(macItems)
+
+	// Render the MAC list and custom help text
+	macListView := m.macList.View()
+	customHelp := renderCustomHelpText()
+
+	// Create styled header and combine it with the MAC list and custom help
+	header := lipgloss.NewStyle().Bold(true).Render(listTitle)
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width).
+		Render(header + "\n" + macListView + "\n\n" + customHelp)
+}
+
+// Render custom help text
+func renderCustomHelpText() string {
+	help := `
+↑/k up • ↓/j down 
+[Enter] Search for target MAC
+[i] Ignore current target 
+[q/Ctrl+C] Quit`
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#626262")). // Customize help color
+		Render(help)
 }
 
 func (m *model) renderRSSIProgressBar(width int) string {
@@ -209,27 +251,6 @@ func renderPane(title, content string, width int) string {
 	body := lipgloss.NewStyle().Render(content)
 
 	return style.Render(header + "\n" + body)
-}
-
-// Render MAC list pane with scrolling and selecting
-func (m *model) renderMacList(width int) string {
-	listTitle := "Target MACs"
-
-	var macItems []list.Item
-	for _, mac := range m.mac {
-		macItems = append(macItems, MACItem{mac: mac, locked: mac == m.lockedMac})
-	}
-
-	m.macList.SetItems(macItems)
-
-	header := lipgloss.NewStyle().Bold(true).Render(listTitle)
-
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63")).
-		Padding(1, 2).
-		Width(width).
-		Render(header + "\n" + m.macList.View())
 }
 
 func tickCmd() tea.Cmd {

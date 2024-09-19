@@ -59,7 +59,7 @@ Create a config.toml file in the same directory as the executable:
 ```toml
 
 [required]
-mac = "XX:XX:XX:XX:XX:XX"
+target_mac = ["12:34:56:AA:CC:EE", "33:34:56:BB:BB:EE", "45:34:56:CC:CC:EE"]
 interface = "wlp0s20f0u1u3"
 
 [credentials]
@@ -78,7 +78,7 @@ You can override the mac and interface settings using command-line arguments:
 
 ```bash
 
-sudo ./rizzyscope -m 12:34:ff:ee:ff -i wlp0s20f0u2u3
+sudo ./rizzyscope -m 11:34:56:23:23:EE,22:34:56:BB:BB:EE,33:34:56:BB:BB:EE -i wlp0s20f0u2u3
 ```
 #### Example 3: Specifying a Different Config File
 
@@ -97,7 +97,7 @@ Configuration File Structure
 # All fields must be filled out. 
 
 [required]
-mac = "XX:XX:XX:XX:XX:XX"            # MAC address to monitor
+target_mac = ["12:34:56:AA:CC:EE", "33:34:56:BB:BB:EE", "45:34:56:CC:CC:EE"]            # MAC address to monitor
 interface = "wlp0s20f0u1u3"          # Network interface to use
 
 [credentials]
