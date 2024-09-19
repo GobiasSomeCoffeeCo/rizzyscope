@@ -36,7 +36,7 @@ func (i MACItem) Title() string       { return i.mac }
 func (i MACItem) Description() string { return "" }
 func (i MACItem) FilterValue() string { return i.mac }
 
-type model struct {
+type Model struct {
 	progress       progress.Model
 	rssi           int
 	mac            []string
@@ -52,11 +52,11 @@ type model struct {
 	macList        list.Model
 }
 
-func (m *model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return tickCmd()
 }
 
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	uuid, err := GetUUIDForInterface(m.iface)
 	if err != nil {
 		fmt.Println("Failed to get UUID:", err)
@@ -113,13 +113,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.progress.Width > maxWidth {
 			m.progress.Width = maxWidth
 		}
-		m.macList.SetWidth(m.windowWidth/2 - 2)
+		m.macList.SetWidth(m.windowWidth / 2)
 		return m, nil
 
 	case tickMsg:
 		if m.lockedMac == "" {
 			m.lockedMac, m.channel = FindValidMac(m.mac, m.ignoreList)
 			m.channelLocked = false
+			m.realTimeOutput = fmt.Sprintln("Searching for target MAC(s)...")
 		}
 
 		newRSSI, newChannel := FetchRSSIData(m.lockedMac)
@@ -169,7 +170,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) View() string {
+func (m *Model) View() string {
 	// Calculate the widths for the top two panes (50/50 split)
 	topPaneWidth := m.windowWidth / 2
 
@@ -188,7 +189,7 @@ func (m *model) View() string {
 }
 
 // Render MAC list pane with custom help text
-func (m *model) renderMacListWithHelp(width int) string {
+func (m *Model) renderMacListWithHelp(width int) string {
 	listTitle := "Target MACs"
 
 	// Populate the MAC list with items
@@ -226,7 +227,7 @@ func renderCustomHelpText() string {
 		Render(help)
 }
 
-func (m *model) renderRSSIProgressBar(width int) string {
+func (m *Model) renderRSSIProgressBar(width int) string {
 	rssiLabel := fmt.Sprintf("RSSI: %d dBm", m.rssi)
 	progressBar := m.progress.View()
 
@@ -236,7 +237,7 @@ func (m *model) renderRSSIProgressBar(width int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
-		Width(width).
+		Width(width - 4).
 		Render(rssiDisplay)
 }
 
@@ -245,7 +246,7 @@ func renderPane(title, content string, width int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
-		Width(width)
+		Width(width - 4)
 
 	header := lipgloss.NewStyle().Bold(true).Render(title)
 	body := lipgloss.NewStyle().Render(content)
@@ -286,7 +287,7 @@ func main() {
 	viper.BindPFlag("required.mac", pflag.Lookup("mac"))
 	viper.BindPFlag("required.interface", pflag.Lookup("interface"))
 
-	m := model{
+	m := Model{
 		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
 		rssi:           minRSSI,
 		lastReceived:   time.Now(),
