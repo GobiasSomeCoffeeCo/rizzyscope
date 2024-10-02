@@ -38,6 +38,7 @@ func (i MACItem) FilterValue() string { return i.mac }
 type Model struct {
 	progress       progress.Model
 	rssi           int
+	rssiData       []int
 	targetMACs     []string
 	lockedMac      string
 	channel        string
@@ -49,6 +50,9 @@ type Model struct {
 	realTimeOutput []string
 	windowWidth    int
 	macList        list.Model
+	sineTick       int
+	amplitude      int
+	frequency      float64
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -151,7 +155,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.lockedMac == "" {
 			m.lockedMac, m.channel = FindValidMac(m.targetMACs, m.ignoreList)
 			m.channelLocked = false
-			
+
 		}
 
 		if m.lockedMac != "" {
@@ -184,6 +188,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// 	}
 						// }
 					}
+				}
+				m.rssiData = append(m.rssiData, m.rssi)
+				if len(m.rssiData) > 50 { // Keep only the last 50 data points
+					m.rssiData = m.rssiData[1:]
 				}
 			}
 		}
@@ -218,43 +226,102 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) View() string {
-	// Calculate the widths for the top two panes (50/50 split)
+
 	topPaneWidth := m.windowWidth / 2
 
 	topLeft := m.renderMacListWithHelp(topPaneWidth)
 
-	topRight := m.renderRSSIProgressBar(topPaneWidth)
+	topRight := lipgloss.JoinVertical(
+		lipgloss.Top,
+		m.renderRSSIProgressBar(topPaneWidth),
+		m.renderRSSIOverTimeChart(topPaneWidth),
+	)
 
-	var bottom string
-
+	var bottomLeft string
 	if m.lockedMac == "" && !m.channelLocked {
-		bottom = renderRealTimePane("Searching for target MAC(s)...", m.realTimeOutput, m.windowWidth)
+		bottomLeft = renderRealTimePane("Searching for target MAC(s)...", m.realTimeOutput, topPaneWidth)
 	} else {
-		bottom = renderRealTimePane(fmt.Sprintf("Locked to target: %s",m.lockedMac), m.realTimeOutput, m.windowWidth)
+		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", m.lockedMac), m.realTimeOutput, topPaneWidth)
 	}
 
-	m.macList.SetShowHelp(false)
-
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
-	view := lipgloss.JoinVertical(lipgloss.Top, topRow, bottom)
 
-	return view
+	return lipgloss.JoinVertical(lipgloss.Top, topRow, bottomLeft)
+}
+
+func (m *Model) renderRSSIOverTimeChart(width int) string {
+	var builder strings.Builder
+
+	maxRSSI, minRSSI := -30, -120
+	height := 7
+
+	// Adjust maxPoints to account for the left wall and make sure the dots don't disappear prematurely
+	maxPoints := width - 20 // Adjust the available width to fit properly
+
+	// Top border of the chart
+	builder.WriteString("     ┌")
+	builder.WriteString(strings.Repeat("─", maxPoints))
+	builder.WriteString("┐\n")
+
+	// Iterate over each Y-axis level (representing RSSI levels)
+	for y := height; y >= 0; y-- {
+		rssiLevel := minRSSI + (y * (maxRSSI - minRSSI) / height)
+
+		// Y-axis labels with 4-character padding to ensure vertical bar alignment
+		builder.WriteString(fmt.Sprintf("%4d │", rssiLevel))
+
+		// Create an empty row of spaces for this level
+		line := make([]rune, maxPoints)
+		for i := range line {
+			line[i] = ' '
+		}
+
+		// Fill in RSSI data from right to left
+		for i := 0; i < len(m.rssiData) && i < maxPoints; i++ {
+			dataIdx := len(m.rssiData) - (i + 1) // Start from the end of the data
+			rssi := m.rssiData[dataIdx]
+
+			normalizedRSSI := (rssi - minRSSI) * height / (maxRSSI - minRSSI)
+
+			if normalizedRSSI == y {
+				// Place the dot on the exact level
+				line[maxPoints-i-1] = '.'
+			} else if normalizedRSSI > y && normalizedRSSI < y+1 {
+				// Close to the next level
+				line[maxPoints-i-1] = '.'
+			} else if normalizedRSSI < y && normalizedRSSI > y-1 {
+				// Close to the previous level
+				line[maxPoints-i-1] = '.'
+			}
+		}
+
+		builder.WriteString(string(line))
+		builder.WriteString("│\n")
+	}
+
+	builder.WriteString("     └ Time ←  ")
+	builder.WriteString(strings.Repeat("─", maxPoints-9))
+	builder.WriteString("┘\n")
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width - 4).
+		Render(builder.String())
 }
 
 // Render MAC list pane with custom help text
 func (m *Model) renderMacListWithHelp(width int) string {
 	listTitle := "Target MACs"
 
-	// Populate the MAC list with items
 	var macItems []list.Item
 	for _, mac := range m.targetMACs {
 		macItems = append(macItems, MACItem{mac: mac, locked: mac == m.lockedMac})
 	}
 
-	// Set the list model's items
 	m.macList.SetItems(macItems)
 
-	// Render the MAC list and custom help text
 	macListView := m.macList.View()
 	customHelp := renderCustomHelpText()
 
@@ -300,7 +367,7 @@ func renderRealTimePane(title string, outputs []string, width int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
-		Width(width - 4)
+		Width(width)
 
 	header := lipgloss.NewStyle().Bold(true).Render(title)
 	body := lipgloss.NewStyle().Render(strings.Join(outputs, "\n"))
@@ -351,6 +418,9 @@ func main() {
 		realTimeOutput: []string{},
 		windowWidth:    80,
 		macList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
+		sineTick:       0,
+		amplitude:      8, // Adjust amplitude
+		frequency:      0.1,
 	}
 
 	kismet, err := LaunchKismet(m.iface)
