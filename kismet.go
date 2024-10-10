@@ -223,10 +223,19 @@ func getCredentials() (string, string, error) {
 	return user, password, nil
 }
 
-func LaunchKismet(iface string) (*exec.Cmd, error) {
+func LaunchKismet(ifaces []string) (*exec.Cmd, error) {
 	log.Println("Launching Kismet...")
 
-	cmd := exec.Command("kismet", "-c", iface)
+	// Initialize the arguments with kismet command
+	args := []string{}
+
+	// Add -c before each interface
+	for _, iface := range ifaces {
+		args = append(args, "-c", iface)
+	}
+
+	// Create the command with the dynamically built args
+	cmd := exec.Command("kismet", args...)
 
 	// Redirecting stdout and stderr to /dev/null to suppress output
 	cmd.Stdout = nil
