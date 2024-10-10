@@ -254,6 +254,9 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 
 	// Adjust maxPoints to account for the left wall and make sure the dots don't disappear prematurely
 	maxPoints := width - 20 // Adjust the available width to fit properly
+	if maxPoints < 0 {
+		maxPoints = 0
+	}
 
 	// Top border of the chart
 	builder.WriteString("     ┌")
