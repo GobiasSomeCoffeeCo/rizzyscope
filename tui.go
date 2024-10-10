@@ -249,14 +249,17 @@ func (m *Model) View() string {
 func (m *Model) renderRSSIOverTimeChart(width int) string {
 	var builder strings.Builder
 
+	minWidth := 31
+	if width <= minWidth {
+		return ""
+	}
+
 	maxRSSI, minRSSI := -30, -120
 	height := 7
 
 	// Adjust maxPoints to account for the left wall and make sure the dots don't disappear prematurely
-	maxPoints := width - 20 // Adjust the available width to fit properly
-	if maxPoints < 0 {
-		maxPoints = 0
-	}
+	maxPoints := width - 20 
+
 
 	// Top border of the chart
 	builder.WriteString("     ┌")
