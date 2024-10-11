@@ -19,6 +19,7 @@ func main() {
 	}
 
 	pflag.StringSliceP("mac", "m", []string{}, "MAC address(es) of the device(s)")
+	pflag.StringSliceP("ssid", "s", []string{}, "SSID of the device(s)")
 	pflag.StringSliceP("interface", "i", []string{}, "Interface name")
 	pflag.StringP("config", "c", "", "Path to config file")
 	pflag.Parse()
@@ -39,19 +40,31 @@ func main() {
 
 	viper.BindPFlag("required.target_mac", pflag.Lookup("mac"))
 	viper.BindPFlag("required.interface", pflag.Lookup("interface"))
+	viper.BindPFlag("optional.target_ssid", pflag.Lookup("ssid"))
+
+	// Read MACs and SSIDs from Viper
+	targetMACs := viper.GetStringSlice("required.target_mac")
+	targetSSIDs := viper.GetStringSlice("optional.target_ssid")
+
+	// Build the targets slice
+	var targets []*TargetItem
+	for _, mac := range targetMACs {
+		targets = append(targets, &TargetItem{Value: mac, TType: MAC})
+	}
+	for _, ssid := range targetSSIDs {
+		targets = append(targets, &TargetItem{Value: ssid, TType: SSID})
+	}
 
 	m := Model{
 		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
-		rssi:           minRSSI,
+		rssi:           MinRSSI,
 		lastReceived:   time.Now(),
-		targetMACs:     viper.GetStringSlice("required.target_mac"),
+		targets:        targets,
 		iface:          viper.GetStringSlice("required.interface"),
 		realTimeOutput: []string{},
+		ignoreList:     []string{},
 		windowWidth:    80,
-		macList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
-		sineTick:       0,
-		amplitude:      8, // Adjust amplitude
-		frequency:      0.1,
+		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
 	}
 
 	kismet, err := LaunchKismet(m.iface)

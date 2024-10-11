@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	minRSSI = -120 // Minimum RSSI value for progress bar
-	maxRSSI = -20  // Maximum RSSI value for progress bar
+	MinRSSI = -120 // Minimum RSSI value for progress bar
+	MaxRSSI = -20  // Maximum RSSI value for progress bar
 
 )
 
@@ -25,11 +25,9 @@ var (
 	cachedUser        string
 	cachedPassword    string
 	credentialsErr    error
-	once              sync.Once // Ensures credentials are fetched only once
+	once              sync.Once                        // Ensures credentials are fetched only once
 	errDeviceNotFound = errors.New("device not found") // Error to match on
 )
-
-
 
 type DeviceInfo struct {
 	RSSI              int               // Signal strength
@@ -93,7 +91,7 @@ func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
 			// Check if the MAC address matches
 			if macAddr, ok := device["base.macaddr"].(string); ok && macAddr == mac {
 				deviceInfo := &DeviceInfo{
-					RSSI:              minRSSI, // Default RSSI value
+					RSSI:              MinRSSI, // Default RSSI value
 					Channel:           "",
 					Manufacturer:      "Unknown",
 					SSID:              "Unknown",
@@ -137,73 +135,141 @@ func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
 }
 
 // Function to find a valid MAC from the list of target MACs
-func FindValidMac(macs []string, ignoreMacs []string) (string, string) {
+// func FindValidMac(macs []string, ignoreMacs []string) (string, string) {
+// 	postJson := KismetPayload{
+// 		Fields: [][]string{
+// 			{"kismet.device.base.macaddr", "base.macaddr"},
+// 			{"kismet.device.base.channel", "base.channel"},
+// 		},
+// 	}
+
+// 	jsonData, err := json.Marshal(postJson)
+// 	if err != nil {
+// 		log.Printf("Error marshaling JSON: %v", err)
+// 		return "", ""
+// 	}
+
+// 	req, err := CreateRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
+// 	if err != nil {
+// 		log.Printf("Error creating request: %v", err)
+// 		return "", ""
+// 	}
+
+// 	client := &http.Client{}
+// 	resp, err := client.Do(req)
+// 	if err != nil {
+// 		log.Printf("Error making request to Kismet API: %v", err)
+// 		return "", ""
+// 	}
+// 	defer resp.Body.Close()
+
+// 	if resp.StatusCode == http.StatusOK {
+// 		var devices []map[string]interface{}
+// 		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
+// 			log.Printf("Error decoding response: %v", err)
+// 			return "", ""
+// 		}
+
+// 		// Loop through all MAC addresses and find the first valid one
+// 		for _, mac := range macs {
+// 			// Skip ignored MAC addresses
+// 			if contains(ignoreMacs, mac) {
+// 				continue
+// 			}
+
+// 			for _, device := range devices {
+// 				if device["base.macaddr"].(string) == mac {
+// 					channel, ok := device["base.channel"].(string)
+// 					if ok {
+// 						return mac, channel
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+// 	// Return empty if no valid MAC is found
+// 	return "", ""
+// }
+
+func FindValidTarget(targets []*TargetItem) (string, string, *TargetItem, error) {
+	// Prepare the payload for Kismet API request
 	postJson := KismetPayload{
 		Fields: [][]string{
 			{"kismet.device.base.macaddr", "base.macaddr"},
 			{"kismet.device.base.channel", "base.channel"},
+			{"dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.ssid", "SSID"},
 		},
 	}
 
+	// Marshal the payload to JSON
 	jsonData, err := json.Marshal(postJson)
 	if err != nil {
-		log.Printf("Error marshaling JSON: %v", err)
-		return "", ""
+		return "", "", nil, fmt.Errorf("error marshaling JSON: %v", err)
 	}
 
+	// Create the HTTP POST request
 	req, err := CreateRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return "", ""
+		return "", "", nil, fmt.Errorf("error creating request: %v", err)
 	}
 
+	// Send the request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("Error making request to Kismet API: %v", err)
-		return "", ""
+		return "", "", nil, fmt.Errorf("error making request to Kismet API: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		var devices []map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
-			log.Printf("Error decoding response: %v", err)
-			return "", ""
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		return "", "", nil, fmt.Errorf("kismet API returned status code %d", resp.StatusCode)
+	}
+
+	// Decode the response body
+	var devices []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
+		return "", "", nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	// Iterate over targets
+	for _, target := range targets {
+		if target.IsIgnored() {
+			continue
 		}
 
-		// Loop through all MAC addresses and find the first valid one
-		for _, mac := range macs {
-			// Skip ignored MAC addresses
-			if contains(ignoreMacs, mac) {
-				continue
-			}
+		// Iterate over devices
+		for _, device := range devices {
+			// Extract device fields
+			deviceMac, _ := device["base.macaddr"].(string)
+			deviceChannel, _ := device["base.channel"].(string)
+			// deviceSSID, _ := device["SSID"].(string)
 
-			for _, device := range devices {
-				if device["base.macaddr"].(string) == mac {
+			if target.TType == MAC {
+				if deviceMac == target.Value {
+					return target.Value, deviceChannel, target, nil
+				}
+			} else if target.TType == SSID {
+				if ssidVal, ok := device["SSID"].(string); ok && ssidVal == target.Value {
+					macAddr, _ := device["base.macaddr"].(string)
 					channel, ok := device["base.channel"].(string)
 					if ok {
-						return mac, channel
+						newTarget := target // Create a copy of the target
+						newTarget.OriginalValue = target.Value // Store the original SSID
+						newTarget.TType = SSID
+						newTarget.Value = macAddr              // Set the value to the MAC address
+						return macAddr, channel, newTarget, nil
 					}
 				}
-			}
-		}
+		}}
 	}
-	// Return empty if no valid MAC is found
-	return "", ""
+
+	// No valid target found
+	return "", "", nil, nil
 }
 
-// Helper function to check if a MAC is in the ignore list
-func contains(slice []string, item string) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
-	}
-	return false
-}
 
-// Function to lazily pull credentials and store them in global variables so we're not unnecessarily pulling them for every api query. 
+// Function to lazily pull credentials and store them in global variables so we're not unnecessarily pulling them for every api query.
 func getCachedCredentials() (string, string, error) {
 	once.Do(func() {
 		cachedUser, cachedPassword, credentialsErr = getCredentials()

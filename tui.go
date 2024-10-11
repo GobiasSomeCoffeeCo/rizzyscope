@@ -23,33 +23,21 @@ const (
 
 type tickMsg time.Time
 
-type MACItem struct {
-	mac    string
-	locked bool
-}
-
-func (i MACItem) Title() string       { return i.mac }
-func (i MACItem) Description() string { return "" }
-func (i MACItem) FilterValue() string { return i.mac }
-
 type Model struct {
 	progress       progress.Model
 	rssi           int
 	rssiData       []int
-	targetMACs     []string
-	lockedMac      string
+	lockedTarget   *TargetItem
 	channel        string
 	ignoreList     []string
 	iface          []string
 	lastReceived   time.Time
 	kismet         *exec.Cmd
+	targets        []*TargetItem
 	channelLocked  bool
 	realTimeOutput []string
 	windowWidth    int
-	macList        list.Model
-	sineTick       int
-	amplitude      int
-	frequency      float64
+	targetList     list.Model
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -62,27 +50,6 @@ func (m *Model) addRealTimeOutput(message string) {
 	if len(m.realTimeOutput) > 7 {
 		m.realTimeOutput = m.realTimeOutput[len(m.realTimeOutput)-7:]
 	}
-}
-
-// Checks if a MAC is in the ignore list
-func (m *Model) isIgnored(mac string) bool {
-	for _, ignoredMac := range m.ignoreList {
-		if ignoredMac == mac {
-			return true
-		}
-	}
-	return false
-}
-
-// Removes a MAC from the ignore list
-func (m *Model) removeFromIgnoreList(mac string) {
-	newList := []string{}
-	for _, ignoredMac := range m.ignoreList {
-		if ignoredMac != mac {
-			newList = append(newList, ignoredMac)
-		}
-	}
-	m.ignoreList = newList
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -99,35 +66,57 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "up", "k", "down", "j":
 			var cmd tea.Cmd
-			m.macList, cmd = m.macList.Update(msg)
+			m.targetList, cmd = m.targetList.Update(msg)
 			return m, cmd
 		case "enter":
-			if selectedItem, ok := m.macList.SelectedItem().(MACItem); ok {
-				// Check if the selected MAC is in the ignore list
-				if m.isIgnored(selectedItem.mac) {
-					// Remove from ignore list
-					m.removeFromIgnoreList(selectedItem.mac)
-					m.addRealTimeOutput(fmt.Sprintf("MAC %s removed from ignore list.", selectedItem.mac))
+			if selectedItem, ok := m.targetList.SelectedItem().(*TargetItem); ok {
+				displayValue := selectedItem.Value
+				if selectedItem.TType == SSID {
+					displayValue = selectedItem.OriginalValue
 				}
 
-				m.lockedMac = selectedItem.mac
+				if selectedItem.IsIgnored() {
+					selectedItem.ToggleIgnore()
+					m.addRealTimeOutput(fmt.Sprintf("Target %s removed from ignore list.", displayValue))
+					m.addRealTimeOutput(fmt.Sprintf("Removed from ignore list? %v", selectedItem.Ignored))
+				}
+
+				m.lockedTarget = selectedItem
+				m.lockedTarget.ChannelLocked = false
 				m.channelLocked = false
 
 				err := hopChannel(uuid)
 				if err != nil {
 					log.Printf("Error hopping channel: %v", err)
+					m.addRealTimeOutput(fmt.Sprintf("Error hopping channel: %v", err))
 				}
 
-				m.addRealTimeOutput(fmt.Sprintf("Searching for MAC %s...", selectedItem.mac))
+				m.addRealTimeOutput(fmt.Sprintf("Searching for target %s...", displayValue))
 			}
 			return m, nil
 		case "i":
-			if m.lockedMac != "" {
-				m.ignoreList = append(m.ignoreList, m.lockedMac)
-				m.addRealTimeOutput(fmt.Sprintf("MAC %s added to ignore list", m.lockedMac))
-				m.lockedMac = ""
+			if m.lockedTarget != nil {
+				m.lockedTarget.ToggleIgnore()
+				displayValue := m.lockedTarget.Value
+				if m.lockedTarget.TType == SSID {
+					displayValue = m.lockedTarget.OriginalValue
+				}
+				action := "added to"
+				if !m.lockedTarget.IsIgnored() {
+					action = "removed from"
+				}
+
+				m.addRealTimeOutput(fmt.Sprintf("Target %s %s ignore list", displayValue, action))
+				for _, target := range m.targets {
+					if (m.lockedTarget.TType == MAC && target.Value == m.lockedTarget.Value) ||
+						(m.lockedTarget.TType == SSID && target.OriginalValue == m.lockedTarget.OriginalValue) {
+						target.Ignored = m.lockedTarget.Ignored
+						break
+					}
+				}
+				m.lockedTarget = nil
 				m.channel = ""
-				m.addRealTimeOutput("Continuing search for new target MAC...")
+				m.addRealTimeOutput("Continuing search for new target...")
 				m.channelLocked = false
 			}
 			err := hopChannel(uuid)
@@ -145,19 +134,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.progress.Width > maxWidth {
 			m.progress.Width = maxWidth
 		}
-		m.macList.SetWidth(m.windowWidth / 2)
+		m.targetList.SetWidth(m.windowWidth / 2)
 		return m, nil
 
 	case tickMsg:
-		if m.lockedMac == "" {
-			m.lockedMac, m.channel = FindValidMac(m.targetMACs, m.ignoreList)
-			m.channelLocked = false
-
+		if m.lockedTarget == nil {
+			value, channel, targetItem, _ := FindValidTarget(m.targets)
+			if value != "" {
+				m.lockedTarget = targetItem
+				m.channel = channel
+				m.channelLocked = false
+			}
 		}
 
-		if m.lockedMac != "" {
+		if m.lockedTarget != nil {
 			// Fetch dynamic info periodically
-			deviceInfo, err := FetchDeviceInfo(m.lockedMac)
+			deviceInfo, err := FetchDeviceInfo(m.lockedTarget.Value)
 			if err != nil && err != errDeviceNotFound {
 				log.Printf("Error fetching device info: %v", err)
 			}
@@ -172,7 +164,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.addRealTimeOutput(fmt.Sprintf("Failed to lock channel: %v", err))
 					} else {
 						m.channelLocked = true
-						m.addRealTimeOutput(fmt.Sprintf("Locked MAC %s on channel %s", m.lockedMac, m.channel))
+						m.addRealTimeOutput(fmt.Sprintf("Locked MAC %s on channel %s", m.lockedTarget.Value, m.channel))
 						// m.addRealTimeOutput(fmt.Sprintf("Locked MAC %s", m.lockedMac))
 						m.addRealTimeOutput(fmt.Sprintf("Make: %s", deviceInfo.Manufacturer))
 						m.addRealTimeOutput(fmt.Sprintf("SSID: %s", deviceInfo.SSID))
@@ -194,15 +186,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Decay RSSI if no signal received in a while
-		if time.Since(m.lastReceived) > timeout && m.rssi > minRSSI {
+		if time.Since(m.lastReceived) > timeout && m.rssi > MinRSSI {
 			m.rssi -= decayRate
-			if m.rssi < minRSSI {
-				m.rssi = minRSSI
+			if m.rssi < MinRSSI {
+				m.rssi = MinRSSI
 			}
 		}
 
 		// Update progress bar
-		percent := float64(m.rssi-minRSSI) / float64(maxRSSI-minRSSI)
+		percent := float64(m.rssi-MinRSSI) / float64(MaxRSSI-MinRSSI)
 		if percent < 0 {
 			percent = 0
 		} else if percent > 1 {
@@ -226,7 +218,7 @@ func (m *Model) View() string {
 
 	topPaneWidth := m.windowWidth / 2
 
-	topLeft := m.renderMacListWithHelp(topPaneWidth)
+	topLeft := m.renderTargetListWithHelp(topPaneWidth)
 
 	topRight := lipgloss.JoinVertical(
 		lipgloss.Top,
@@ -234,11 +226,20 @@ func (m *Model) View() string {
 		m.renderRSSIOverTimeChart(topPaneWidth),
 	)
 
+	var targetDisplay string
+	if m.lockedTarget != nil {
+		if m.lockedTarget.OriginalValue != "" && m.lockedTarget.TType == SSID {
+			targetDisplay = m.lockedTarget.OriginalValue // Display SSID
+		} else {
+			targetDisplay = m.lockedTarget.Value // Display MAC address
+		}
+	}
+
 	var bottomLeft string
-	if m.lockedMac == "" && !m.channelLocked {
-		bottomLeft = renderRealTimePane("Searching for target MAC(s)...", m.realTimeOutput, topPaneWidth)
+	if m.lockedTarget == nil || !m.channelLocked {
+		bottomLeft = renderRealTimePane("Searching for target(s)...", m.realTimeOutput, topPaneWidth)
 	} else {
-		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", m.lockedMac), m.realTimeOutput, topPaneWidth)
+		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", targetDisplay), m.realTimeOutput, topPaneWidth)
 	}
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
@@ -258,8 +259,7 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 	height := 7
 
 	// Adjust maxPoints to account for the left wall and make sure the dots don't disappear prematurely
-	maxPoints := width - 20 
-
+	maxPoints := width - 20
 
 	// Top border of the chart
 	builder.WriteString("     ┌")
@@ -314,19 +314,18 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 		Render(builder.String())
 }
 
-// Render MAC list pane with custom help text
-func (m *Model) renderMacListWithHelp(width int) string {
-	listTitle := "Target MACs"
+func (m *Model) renderTargetListWithHelp(width int) string {
+	listTitle := "Targets"
 
-	var macItems []list.Item
-	for _, mac := range m.targetMACs {
-		macItems = append(macItems, MACItem{mac: mac, locked: mac == m.lockedMac})
+	var targetItems []list.Item
+	for _, target := range m.targets {
+		targetItems = append(targetItems, target)
 	}
 
-	m.macList.SetItems(macItems)
+	m.targetList.SetItems(targetItems)
 
-	macListView := m.macList.View()
-	m.macList.SetShowHelp(false)
+	macListView := m.targetList.View()
+	m.targetList.SetShowHelp(false)
 	customHelp := renderCustomHelpText()
 
 	// Create styled header and combine it with the MAC list and custom help
@@ -343,7 +342,7 @@ func (m *Model) renderMacListWithHelp(width int) string {
 func renderCustomHelpText() string {
 	help := `
 ↑/k up • ↓/j down 
-[Enter] Search for target MAC
+[Enter] Search for targets
 [i] Ignore current target 
 [q/Ctrl+C] Quit`
 	return lipgloss.NewStyle().
