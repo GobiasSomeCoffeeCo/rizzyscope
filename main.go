@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -11,6 +13,23 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
+
+func formatMAC(mac string) (string, error) {
+	// Remove all non-hexadecimal characters
+	cleanMAC := regexp.MustCompile(`[^0-9A-Fa-f]`).ReplaceAllString(mac, "")
+
+	// Check if the cleaned MAC has exactly 12 characters
+	if len(cleanMAC) != 12 {
+		return "", fmt.Errorf("invalid MAC address: %s", mac)
+	}
+
+	// Format the MAC address
+	formattedMAC := strings.ToUpper(fmt.Sprintf("%s:%s:%s:%s:%s:%s",
+		cleanMAC[0:2], cleanMAC[2:4], cleanMAC[4:6],
+		cleanMAC[6:8], cleanMAC[8:10], cleanMAC[10:12]))
+
+	return formattedMAC, nil
+}
 
 func main() {
 	if os.Geteuid() != 0 {
@@ -43,8 +62,19 @@ func main() {
 	viper.BindPFlag("optional.target_ssid", pflag.Lookup("ssid"))
 
 	// Read MACs and SSIDs from Viper
-	targetMACs := viper.GetStringSlice("required.target_mac")
+	rawTargetMACs := viper.GetStringSlice("required.target_mac")
 	targetSSIDs := viper.GetStringSlice("optional.target_ssid")
+
+	// Format and validate MAC addresses
+	var targetMACs []string
+	for _, mac := range rawTargetMACs {
+		formattedMAC, err := formatMAC(mac)
+		if err != nil {
+			fmt.Printf("Warning: %v\n", err)
+			continue
+		}
+		targetMACs = append(targetMACs, formattedMAC)
+	}
 
 	// Build the targets slice
 	var targets []*TargetItem
@@ -56,15 +86,15 @@ func main() {
 	}
 
 	m := Model{
-		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
-		rssi:           MinRSSI,
-		lastReceived:   time.Now(),
-		targets:        targets,
-		iface:          viper.GetStringSlice("required.interface"),
+		progress:      progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
+		rssi:          MinRSSI,
+		lastReceived:  time.Now(),
+		targets:       targets,
+		iface:         viper.GetStringSlice("required.interface"),
 		realTimeOutput: []string{},
-		ignoreList:     []string{},
-		windowWidth:    80,
-		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
+		ignoreList:    []string{},
+		windowWidth:   80,
+		targetList:    list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
 	}
 
 	kismet, err := LaunchKismet(m.iface)
@@ -72,7 +102,6 @@ func main() {
 		fmt.Println("Kismet couldn't launch. Check the interface.")
 		os.Exit(1)
 	}
-
 	m.kismet = kismet
 
 	time.Sleep(3 * time.Second)
