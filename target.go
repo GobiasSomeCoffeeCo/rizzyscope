@@ -3,7 +3,7 @@ package main
 type TargetType int
 
 const (
-	MAC TargetType = iota
+	MAC TargetType = iota + 1
 	SSID
 )
 

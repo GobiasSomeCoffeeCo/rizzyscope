@@ -134,63 +134,6 @@ func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
 	return nil, errDeviceNotFound
 }
 
-// Function to find a valid MAC from the list of target MACs
-// func FindValidMac(macs []string, ignoreMacs []string) (string, string) {
-// 	postJson := KismetPayload{
-// 		Fields: [][]string{
-// 			{"kismet.device.base.macaddr", "base.macaddr"},
-// 			{"kismet.device.base.channel", "base.channel"},
-// 		},
-// 	}
-
-// 	jsonData, err := json.Marshal(postJson)
-// 	if err != nil {
-// 		log.Printf("Error marshaling JSON: %v", err)
-// 		return "", ""
-// 	}
-
-// 	req, err := CreateRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
-// 	if err != nil {
-// 		log.Printf("Error creating request: %v", err)
-// 		return "", ""
-// 	}
-
-// 	client := &http.Client{}
-// 	resp, err := client.Do(req)
-// 	if err != nil {
-// 		log.Printf("Error making request to Kismet API: %v", err)
-// 		return "", ""
-// 	}
-// 	defer resp.Body.Close()
-
-// 	if resp.StatusCode == http.StatusOK {
-// 		var devices []map[string]interface{}
-// 		if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
-// 			log.Printf("Error decoding response: %v", err)
-// 			return "", ""
-// 		}
-
-// 		// Loop through all MAC addresses and find the first valid one
-// 		for _, mac := range macs {
-// 			// Skip ignored MAC addresses
-// 			if contains(ignoreMacs, mac) {
-// 				continue
-// 			}
-
-// 			for _, device := range devices {
-// 				if device["base.macaddr"].(string) == mac {
-// 					channel, ok := device["base.channel"].(string)
-// 					if ok {
-// 						return mac, channel
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// 	// Return empty if no valid MAC is found
-// 	return "", ""
-// }
-
 func FindValidTarget(targets []*TargetItem) (string, string, *TargetItem, error) {
 	// Prepare the payload for Kismet API request
 	postJson := KismetPayload{
@@ -254,20 +197,20 @@ func FindValidTarget(targets []*TargetItem) (string, string, *TargetItem, error)
 					macAddr, _ := device["base.macaddr"].(string)
 					channel, ok := device["base.channel"].(string)
 					if ok {
-						newTarget := target // Create a copy of the target
+						newTarget := target                    // Create a copy of the target
 						newTarget.OriginalValue = target.Value // Store the original SSID
 						newTarget.TType = SSID
-						newTarget.Value = macAddr              // Set the value to the MAC address
+						newTarget.Value = macAddr // Set the value to the MAC address
 						return macAddr, channel, newTarget, nil
 					}
 				}
-		}}
+			}
+		}
 	}
 
 	// No valid target found
 	return "", "", nil, nil
 }
-
 
 // Function to lazily pull credentials and store them in global variables so we're not unnecessarily pulling them for every api query.
 func getCachedCredentials() (string, string, error) {

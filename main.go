@@ -86,15 +86,15 @@ func main() {
 	}
 
 	m := Model{
-		progress:      progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
-		rssi:          MinRSSI,
-		lastReceived:  time.Now(),
-		targets:       targets,
-		iface:         viper.GetStringSlice("required.interface"),
+		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
+		rssi:           MinRSSI,
+		lastReceived:   time.Now(),
+		targets:        targets,
+		iface:          viper.GetStringSlice("required.interface"),
 		realTimeOutput: []string{},
-		ignoreList:    []string{},
-		windowWidth:   80,
-		targetList:    list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
+		ignoreList:     []string{},
+		windowWidth:    80,
+		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
 	}
 
 	kismet, err := LaunchKismet(m.iface)
