@@ -61,9 +61,14 @@ Create a config.toml file in the same directory as the executable:
 ```toml
 
 [required]
-target_mac = ["12:34:56:AA:CC:EE", "33:34:56:BB:BB:EE", "45:34:56:CC:CC:EE"]
-interface = "wlp0s20f0u1u3"
+target_mac = ["12:34:56:AA:CC:EE","22:34:56:bb:cc:ee","554456BBCCEE","ab3423febc3d"]
+interface = ["wlp0s20f0u2u3", "wlp0s20f0u2u4"]
 
+[optional]
+target_ssid = ["TPLink", "UrWifi", "MyWifi", "NotUrWifi"]
+kismet_endpoint = "127.0.0.1:2501"
+
+# Kismet Credentials
 [credentials]
 user = "test"
 password = "test"
@@ -90,21 +95,33 @@ You can specify a different configuration file using the -c flag:
 
 sudo ./rizzyscope -c /path/to/your/config.toml
 ```
+#### Example 4: Implement --skip-kismet flag to use existing Kismet instance
+
+You can specify a different configuration file using the -c flag:
+
+```bash
+sudo ./rizzyscope --skip-kismet 
+sudo ./rizzyscope -k
+
+```
 Configuration
 
 The program can be configured via a TOML file. The default configuration file is config.toml in the current directory.
 Configuration File Structure
 
 ```toml
-# All fields must be filled out. 
-
 [required]
-target_mac = ["12:34:56:AA:CC:EE", "33:34:56:BB:BB:EE", "45:34:56:CC:CC:EE"]            # MAC address to monitor
-interface = "wlp0s20f0u1u3"          # Network interface to use
+target_mac = ["12:34:56:AA:CC:EE","22:34:56:bb:cc:ee","554456BBCCEE","ab3423febc3d"] # Target MACs
+interface = ["wlp0s20f0u2u3", "wlp0s20f0u2u4"] # Supports multiple interfaces
 
+[optional]
+target_ssid = ["TPLink", "UrWifi", "MyWifi", "NotUrWifi"] # Target by SSID
+kismet_endpoint = "127.0.0.1:2501" # Where you want to point the kismet enpoint
+
+# Kismet Credentials
 [credentials]
-user = "test"                        # Kismet username
-password = "test"                    # Kismet password
+user = "test"  # Your kismet username
+password = "test" # Your kismet password
 
 ```
 ## How It Works
