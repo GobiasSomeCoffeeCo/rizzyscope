@@ -97,8 +97,6 @@ sudo ./rizzyscope -c /path/to/your/config.toml
 ```
 #### Example 4: Implement --skip-kismet flag to use existing Kismet instance
 
-You can specify a different configuration file using the -c flag:
-
 ```bash
 sudo ./rizzyscope --skip-kismet 
 sudo ./rizzyscope -k
