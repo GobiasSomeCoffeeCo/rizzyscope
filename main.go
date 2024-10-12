@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -15,15 +16,12 @@ import (
 )
 
 func formatMAC(mac string) (string, error) {
-	// Remove all non-hexadecimal characters
 	cleanMAC := regexp.MustCompile(`[^0-9A-Fa-f]`).ReplaceAllString(mac, "")
 
-	// Check if the cleaned MAC has exactly 12 characters
 	if len(cleanMAC) != 12 {
 		return "", fmt.Errorf("invalid MAC address: %s", mac)
 	}
 
-	// Format the MAC address
 	formattedMAC := strings.ToUpper(fmt.Sprintf("%s:%s:%s:%s:%s:%s",
 		cleanMAC[0:2], cleanMAC[2:4], cleanMAC[4:6],
 		cleanMAC[6:8], cleanMAC[8:10], cleanMAC[10:12]))
@@ -41,6 +39,8 @@ func main() {
 	pflag.StringSliceP("ssid", "s", []string{}, "SSID of the device(s)")
 	pflag.StringSliceP("interface", "i", []string{}, "Interface name")
 	pflag.StringP("config", "c", "", "Path to config file")
+	pflag.StringP("kismet-endpoint", "u", "127.0.0.1:2501", "Kismet server endpoint ip:port")
+	skipKismet := pflag.BoolP("skip-kismet", "k", false, "Skip launching Kismet (use if kismet is already running)")
 	pflag.Parse()
 
 	configPath := viper.GetString("config")
@@ -57,9 +57,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	viper.BindPFlag("required.target_mac", pflag.Lookup("mac"))
-	viper.BindPFlag("required.interface", pflag.Lookup("interface"))
-	viper.BindPFlag("optional.target_ssid", pflag.Lookup("ssid"))
+	if err := viper.BindPFlag("required.target_mac", pflag.Lookup("mac")); err != nil {
+		log.Printf("Error in parsing MAC flag/config: %v", err)
+	}
+
+	if err := viper.BindPFlag("required.interface", pflag.Lookup("interface")); err != nil {
+		log.Printf("Error in parsing interface flag/config: %v", err)
+	}
+
+	if err := viper.BindPFlag("optional.kismet_endpoint", pflag.Lookup("kismet-endpoint")); err != nil {
+		log.Printf("Error in parsing kismet-endpoint flag/config: %v", err)
+	}
+
+	if err := viper.BindPFlag("optional.target_ssid", pflag.Lookup("ssid")); err != nil {
+		log.Printf("Error in parsing 'ssid' flag/config: %v", err)
+	}
 
 	// Read MACs and SSIDs from Viper
 	rawTargetMACs := viper.GetStringSlice("required.target_mac")
@@ -95,14 +107,20 @@ func main() {
 		ignoreList:     []string{},
 		windowWidth:    80,
 		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
+		kismetEndpoint: viper.GetString("optional.kismet_endpoint"),
 	}
 
-	kismet, err := LaunchKismet(m.iface)
-	if err != nil {
-		fmt.Println("Kismet couldn't launch. Check the interface.")
-		os.Exit(1)
+	if *skipKismet {
+		m.kismet = nil
+	} else {
+		kismet, err := LaunchKismet(m.iface)
+		if err != nil {
+			fmt.Println("Kismet couldn't launch. Please ensure Kimset is installed and in your $PATH.")
+			os.Exit(1)
+		}
+
+		m.kismet = kismet
 	}
-	m.kismet = kismet
 
 	time.Sleep(3 * time.Second)
 

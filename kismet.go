@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ type KismetPayload struct {
 }
 
 // Function to fetch device info from Kismet
-func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
+func FetchDeviceInfo(mac string, kismetEndpoint string) (*DeviceInfo, error) {
 	postJson := KismetPayload{
 		Fields: [][]string{
 			{"kismet.device.base.macaddr", "base.macaddr"},
@@ -65,7 +66,9 @@ func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
 		return nil, err
 	}
 
-	req, err := CreateRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
+	kismetEndpoint = fmt.Sprintf("http://%s/devices/last-time/-5/devices.json", kismetEndpoint)
+
+	req, err := CreateRequest("POST", kismetEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Error creating request: %v", err)
 		return nil, err
@@ -134,7 +137,7 @@ func FetchDeviceInfo(mac string) (*DeviceInfo, error) {
 	return nil, errDeviceNotFound
 }
 
-func FindValidTarget(targets []*TargetItem) (string, string, *TargetItem, error) {
+func FindValidTarget(targets []*TargetItem, kismetEndpoint string) (string, string, *TargetItem, error) {
 	// Prepare the payload for Kismet API request
 	postJson := KismetPayload{
 		Fields: [][]string{
@@ -150,8 +153,10 @@ func FindValidTarget(targets []*TargetItem) (string, string, *TargetItem, error)
 		return "", "", nil, fmt.Errorf("error marshaling JSON: %v", err)
 	}
 
+	kismetEndpoint = fmt.Sprintf("http://%s/devices/last-time/-5/devices.json", kismetEndpoint)
+
 	// Create the HTTP POST request
-	req, err := CreateRequest("POST", "http://127.0.0.1:2501/devices/last-time/-5/devices.json", bytes.NewBuffer(jsonData))
+	req, err := CreateRequest("POST", kismetEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", "", nil, fmt.Errorf("error creating request: %v", err)
 	}
@@ -281,8 +286,9 @@ func CreateRequest(method, url string, body io.Reader) (*http.Request, error) {
 }
 
 // Function to get UUID for a specific interface
-func GetUUIDForInterface(interfaceName string) (string, error) {
-	req, err := CreateRequest("GET", "http://127.0.0.1:2501/datasource/all_sources.json", nil)
+func GetUUIDForInterface(interfaceName string, kismetEndpoint string) (string, error) {
+	kismetEndpoint = fmt.Sprintf("http://%s/datasource/all_sources.json", kismetEndpoint)
+	req, err := CreateRequest("GET", kismetEndpoint, nil)
 	if err != nil {
 		return "", err
 	}
@@ -298,6 +304,7 @@ func GetUUIDForInterface(interfaceName string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Failed to get data sources: %s", string(body))
+		os.Exit(1)
 		return "", fmt.Errorf("failed to get data sources: %s", string(body))
 	}
 
@@ -320,10 +327,10 @@ func GetUUIDForInterface(interfaceName string) (string, error) {
 	return "", fmt.Errorf("UUID not found for interface %s", interfaceName)
 }
 
-func hopChannel(uuid string) error {
-	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_hop.cmd", uuid)
+func hopChannel(uuid string, kismetEndpoint string) error {
+	kismetEndpoint = fmt.Sprintf("http://%s/datasource/by-uuid/%s/set_hop.cmd", kismetEndpoint, uuid)
 
-	req, err := CreateRequest("POST", url, nil)
+	req, err := CreateRequest("POST", kismetEndpoint, nil)
 	if err != nil {
 		log.Printf("Failed to create request: %v", err)
 		return fmt.Errorf("failed to create request: %v", err)
@@ -347,8 +354,8 @@ func hopChannel(uuid string) error {
 }
 
 // Function to lock the channel for a specific interface UUID
-func lockChannel(uuid, channel string) error {
-	url := fmt.Sprintf("http://127.0.0.1:2501/datasource/by-uuid/%s/set_channel.cmd", uuid)
+func lockChannel(uuid, channel, kismetEndpoint string) error {
+	kismetEndpoint = fmt.Sprintf("http://%s/datasource/by-uuid/%s/set_channel.cmd", kismetEndpoint, uuid)
 
 	payload := map[string]string{"channel": channel}
 	jsonData, err := json.Marshal(payload)
@@ -357,7 +364,7 @@ func lockChannel(uuid, channel string) error {
 		return fmt.Errorf("failed to marshal JSON: %v", err)
 	}
 
-	req, err := CreateRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := CreateRequest("POST", kismetEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Failed to create request: %v", err)
 		return fmt.Errorf("failed to create request: %v", err)

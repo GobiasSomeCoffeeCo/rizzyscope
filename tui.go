@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -38,13 +39,14 @@ type Model struct {
 	realTimeOutput []string
 	windowWidth    int
 	targetList     list.Model
+	kismetEndpoint string
 }
 
 func (m *Model) Init() tea.Cmd {
 	return tickCmd()
 }
 
-// Add a message to the real-time output, ensuring we only keep the last 25 messages
+// Add a message to the real-time output, ensuring we only keep the last 7 messages
 func (m *Model) addRealTimeOutput(message string) {
 	m.realTimeOutput = append(m.realTimeOutput, message)
 	if len(m.realTimeOutput) > 7 {
@@ -53,16 +55,22 @@ func (m *Model) addRealTimeOutput(message string) {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	uuid, err := GetUUIDForInterface(m.iface[0])
+	uuid, err := GetUUIDForInterface(m.iface[0], m.kismetEndpoint)
 	if err != nil {
-		log.Printf("Failed to get UUID: %v", err)
+		log.Printf("Failed to get UUID: %v\n\rPlease check your config and make sure your interface is correct.", err)
+		os.Exit(1)
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
-			m.kismet.Process.Kill()
+			if m.kismet != nil {
+				err := m.kismet.Process.Kill()
+				if err != nil {
+					log.Printf("Unable to kill Kismet process. Please check if Kismet is still running.")
+				}
+			}
 			return m, tea.Quit
 		case "up", "k", "down", "j":
 			var cmd tea.Cmd
@@ -85,7 +93,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lockedTarget.ChannelLocked = false
 				m.channelLocked = false
 
-				err := hopChannel(uuid)
+				err := hopChannel(uuid, m.kismetEndpoint)
 				if err != nil {
 					log.Printf("Error hopping channel: %v", err)
 					m.addRealTimeOutput(fmt.Sprintf("Error hopping channel: %v", err))
@@ -119,7 +127,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addRealTimeOutput("Continuing search for new target...")
 				m.channelLocked = false
 			}
-			err := hopChannel(uuid)
+			err := hopChannel(uuid, m.kismetEndpoint)
 			if err != nil {
 				log.Printf("Error hopping channel: %v", err)
 			}
@@ -139,7 +147,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.lockedTarget == nil {
-			value, channel, targetItem, _ := FindValidTarget(m.targets)
+			value, channel, targetItem, _ := FindValidTarget(m.targets, m.kismetEndpoint)
 			if value != "" {
 				m.lockedTarget = targetItem
 				m.channel = channel
@@ -149,7 +157,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.lockedTarget != nil {
 			// Fetch dynamic info periodically
-			deviceInfo, err := FetchDeviceInfo(m.lockedTarget.Value)
+			deviceInfo, err := FetchDeviceInfo(m.lockedTarget.Value, m.kismetEndpoint)
 			if err != nil && err != errDeviceNotFound {
 				log.Printf("Error fetching device info: %v", err)
 			}
@@ -160,7 +168,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Lock the channel if not already locked
 				if !m.channelLocked {
-					if err := lockChannel(uuid, m.channel); err != nil {
+					if err := lockChannel(uuid, m.channel, m.kismetEndpoint); err != nil {
 						m.addRealTimeOutput(fmt.Sprintf("Failed to lock channel: %v", err))
 					} else {
 						m.channelLocked = true
@@ -307,7 +315,7 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 	builder.WriteString("┘\n")
 
 	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
 		Width(width - 4).
