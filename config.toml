@@ -1,6 +1,10 @@
 [required]
-target_mac = ["12:34:56:AA:CC:EE", "12:34:56:78:DE:87", "12:34:56:78:4F:E3"]
-interface = "wlp0s20f0u1u3"
+target_mac = ["12:34:56:AA:CC:EE","22:34:56:bb:cc:ee","554456BBCCEE","ab3423febc3d"]
+interface = ["wlp0s20f0u2u3", "wlp0s20f0u2u4"]
+
+[optional]
+target_ssid = ["TPLink", "UrWifi", "MyWifi", "NotUrWifi"]
+kismet_endpoint = "127.0.0.1:2501"
 
 # Kismet Credentials
 [credentials]
