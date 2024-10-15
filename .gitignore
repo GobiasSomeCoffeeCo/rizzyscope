@@ -23,3 +23,10 @@ go.work.sum
 
 # env file
 .env
+
+build_version.sh
+config.toml
+example.toml
+test.json
+rizzyscope
+
