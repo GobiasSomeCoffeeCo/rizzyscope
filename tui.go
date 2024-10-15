@@ -40,6 +40,8 @@ type Model struct {
 	windowWidth    int
 	targetList     list.Model
 	kismetEndpoint string
+	kismetData     []string // Holds Kismet data to display
+	maxDataSize    int
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -55,9 +57,11 @@ func (m *Model) addRealTimeOutput(message string) {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// TODO will need to handle multiple interfaces and bands they can support.
+	// The interface chosen has no logic behind whether it can support the channel passed by another network card
 	uuid, err := GetUUIDForInterface(m.iface[0], m.kismetEndpoint)
 	if err != nil {
-		log.Printf("Failed to get UUID: %v\n\rPlease check your config and make sure your interface is correct.", err)
+		log.Printf("Failed to get UUID: %v\n\rPlease check the config.toml and make sure your interface names are correct.", err)
 		os.Exit(1)
 	}
 
@@ -146,6 +150,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		devices, err := FetchAllDevices(m.kismetEndpoint)
+		m.addKismetData(devices)
+		if err == nil {
+			m.addKismetData(devices)
+		}
+
 		if m.lockedTarget == nil {
 			value, channel, targetItem, _ := FindValidTarget(m.targets, m.kismetEndpoint)
 			if value != "" {
@@ -172,7 +182,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.addRealTimeOutput(fmt.Sprintf("Failed to lock channel: %v", err))
 					} else {
 						m.channelLocked = true
-						m.addRealTimeOutput(fmt.Sprintf("Locked MAC %s on channel %s", m.lockedTarget.Value, m.channel))
+						m.addRealTimeOutput(fmt.Sprintf("Channel: %s", m.channel))
 						// m.addRealTimeOutput(fmt.Sprintf("Locked MAC %s", m.lockedMac))
 						m.addRealTimeOutput(fmt.Sprintf("Make: %s", deviceInfo.Manufacturer))
 						m.addRealTimeOutput(fmt.Sprintf("SSID: %s", deviceInfo.SSID))
@@ -212,13 +222,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(tickCmd(), m.progress.IncrPercent(0))
 
-	case progress.FrameMsg:
-		progressModel, cmd := m.progress.Update(msg)
-		m.progress = progressModel.(progress.Model)
-		return m, cmd
+	// case progress.FrameMsg:
+	// 	progressModel, cmd := m.progress.Update(msg)
+	// 	m.progress = progressModel.(progress.Model)
+	// 	return m, cmd
 
 	default:
 		return m, nil
+	}
+}
+
+// Add new Kismet data to the model's buffer
+func (m *Model) addKismetData(data []map[string]interface{}) {
+	for _, device := range data {
+		// Format device information (MAC, RSSI, etc.)
+		mac, _ := device["kismet.device.base.macaddr"].(string)
+
+		// rssi, _ := device["kismet.device.base.signal/kismet.common.signal.last_signal"].(float64)
+		channel, _ := device["kismet.device.base.channel"].(string)
+		// ssid, _ := device["dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.ssid"].(string)
+
+		// Create a formatted string to display
+		entry := fmt.Sprintf("MAC: %s, Channel: %s", mac, channel)
+
+		// Append to the data buffer
+		m.kismetData = append(m.kismetData, entry)
+
+		// Keep only the last `maxDataSize` entries
+		if len(m.kismetData) > m.maxDataSize {
+			m.kismetData = m.kismetData[len(m.kismetData)-m.maxDataSize:]
+		}
 	}
 }
 
@@ -250,9 +283,11 @@ func (m *Model) View() string {
 		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", targetDisplay), m.realTimeOutput, topPaneWidth)
 	}
 
+	bottomRight := renderKismetPane("Kismet Real-Time Data", m.kismetData, topPaneWidth)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, bottomLeft, bottomRight)
 
-	return lipgloss.JoinVertical(lipgloss.Top, topRow, bottomLeft)
+	return lipgloss.JoinVertical(lipgloss.Top, topRow, bottomRow)
 }
 
 func (m *Model) renderRSSIOverTimeChart(width int) string {
@@ -378,6 +413,7 @@ func renderRealTimePane(title string, outputs []string, width int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
+		Height(13).
 		Width(width)
 
 	header := lipgloss.NewStyle().Bold(true).Render(title)
@@ -390,4 +426,17 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func renderKismetPane(title string, data []string, width int) string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width - 4)
+
+	header := lipgloss.NewStyle().Bold(true).Render(title)
+	body := lipgloss.NewStyle().Render(strings.Join(data, "\n"))
+
+	return style.Render(header + "\n" + body)
 }

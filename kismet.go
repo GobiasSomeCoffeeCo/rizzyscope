@@ -45,7 +45,7 @@ type KismetPayload struct {
 	Fields [][]string `json:"fields"`
 }
 
-// Function to fetch device info from Kismet
+// Function to fetch device info from the Kismet API and returns a *DeviceInfo object
 func FetchDeviceInfo(mac string, kismetEndpoint string) (*DeviceInfo, error) {
 	postJson := KismetPayload{
 		Fields: [][]string{
@@ -137,6 +137,7 @@ func FetchDeviceInfo(mac string, kismetEndpoint string) (*DeviceInfo, error) {
 	return nil, errDeviceNotFound
 }
 
+// Finds a valid MAC or SSID and returns a MAC, channel, *TargetItem, error
 func FindValidTarget(targets []*TargetItem, kismetEndpoint string) (string, string, *TargetItem, error) {
 	// Prepare the payload for Kismet API request
 	postJson := KismetPayload{
@@ -237,6 +238,7 @@ func getCredentials() (string, string, error) {
 	return user, password, nil
 }
 
+// Launch Kismet automatically without user interaction
 func LaunchKismet(ifaces []string) (*exec.Cmd, error) {
 	log.Println("Launching Kismet...")
 
@@ -385,4 +387,38 @@ func lockChannel(uuid, channel, kismetEndpoint string) error {
 	}
 
 	return nil
+}
+
+// Fetches all device data from the Kismet API
+func FetchAllDevices(kismetEndpoint string) ([]map[string]interface{}, error) {
+	kismetEndpoint = fmt.Sprintf("http://%s/devices/last-time/-5/devices.json", kismetEndpoint)
+
+	// Use CreateRequest instead of http.NewRequest to include authentication
+	req, err := CreateRequest("GET", kismetEndpoint, nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return nil, err
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error making request to Kismet API: %v", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyString := string(bodyBytes)
+		return nil, fmt.Errorf("kismet API returned status code %d: %s", resp.StatusCode, bodyString)
+	}
+
+	var devices []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&devices); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return nil, err
+	}
+
+	return devices, nil
 }

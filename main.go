@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,13 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
+
+// Clear the terminal screen
+func clearScreen() {
+    cmd := exec.Command("clear") // For Linux/Mac
+    cmd.Stdout = os.Stdout
+    cmd.Run()
+}
 
 func formatMAC(mac string) (string, error) {
 	cleanMAC := regexp.MustCompile(`[^0-9A-Fa-f]`).ReplaceAllString(mac, "")
@@ -108,6 +116,8 @@ func main() {
 		windowWidth:    80,
 		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
 		kismetEndpoint: viper.GetString("optional.kismet_endpoint"),
+		kismetData:     make([]string, 0),
+		maxDataSize:    10,
 	}
 
 	if *skipKismet {
@@ -123,6 +133,7 @@ func main() {
 	}
 
 	time.Sleep(3 * time.Second)
+	clearScreen()
 
 	if _, err := tea.NewProgram(&m).Run(); err != nil {
 		fmt.Println("Error:", err)
