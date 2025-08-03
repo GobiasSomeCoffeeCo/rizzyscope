@@ -4,134 +4,149 @@
 
 ## Overview
 
-Are you tired of that pesky neighbor sending **deauths** all over the place? Do you want to catch him in the act with your trusty **Yagi antenna**, pinpoint his location and wave? Or maybe you're more of a sit-back-and-relax type who prefers to passively hang out on a channel and collect **EAPOL** messages like they’re going out of style? Maybe you're on a mission to find that rogue AP that popped up out of nowhere. Well, **Rizzyscope** has got you covered!
+Rizzyscope is a command-line tool designed for wireless network monitoring and analysis. Built as an interface to the Kismet wireless network detector, it provides real-time monitoring capabilities for network security professionals, researchers, and system administrators.
 
-**Rizzyscope** is the tool you didn’t know you needed to interact with the **Kismet wireless network detector**. It allows you to monitor the **RSSI (Received Signal Strength Indicator)** of a specific MAC address right in your terminal, turning your humble computer into a deauth-hunting, rogue AP-finding, packet-sniffing machine. Whether you're on a mission to track down malicious devices or just having some fun monitoring the airwaves, Rizzyscope makes it easy.
+The tool enables users to monitor the Received Signal Strength Indicator (RSSI) of specific MAC addresses directly from the terminal, facilitating network troubleshooting, security auditing, and wireless device tracking. Rizzyscope streamlines the process of detecting unauthorized devices, monitoring network activity, and conducting wireless security assessments.
 
-## Features
+## Key Features
 
-- **Automatic Kismet launch:**  Who wants to manually start Kismet? Not you. Let Rizzyscope handle that for you automatically. Rizzyscope automatically launches Kismet, eliminating the need for manual startup.
-- **MAC address monitoring:** Got a pesky neighbor’s device or rogue AP you want to track? Just plug in their MAC address and let Rizzyscope work its magic through the Kismet API. The program searches for the specified MAC address via the Kismet API.
-- **Channel locking:** Once your target is in sight, Rizzyscope locks onto the channel like a heat-seeking missile—no distractions, just raw signal strength. Once the MAC address is found, Rizzyscope locks onto the channel of that device.
-- **Real-time RSSI display:** Visualize the RSSI values in real-time within the terminal using a progress bar.
-- **Configurable via TOML file:** Don’t like typing long commands? Simply configure Rizzyscope via the config.toml file, and you’ll be up and running in no time. (Even faster than your neighbor can say "deauth.") Rizzyscope can be configured using a `config.toml` file for easy setup.
-- **Command-line overrides:** Feeling fancy? Override your configuration settings directly from the command line, because who doesn’t like the power of options? Users can override configuration file settings directly via command-line arguments.
+- **Automated Kismet Integration**: Automatically launches and configures Kismet, eliminating manual setup procedures
+- **Target Device Monitoring**: Track specific devices by MAC address using the Kismet API
+- **Channel Lock Functionality**: Automatically locks onto the target device's operating channel for focused monitoring
+- **Real-Time RSSI Visualization**: Displays signal strength data through an intuitive terminal-based progress bar
+- **Flexible Configuration**: Supports both TOML configuration files and command-line parameter overrides
+- **Multi-Interface Support**: Compatible with multiple wireless network interfaces simultaneously
 
-## Requirements
+## System Requirements
 
-- **Kismet**: Rizzyscope requires Kismet to be installed on your machine. Kismet is a wireless network and device detector, sniffer, wardriving tool, and WIDS (Wireless Intrusion Detection) framework. Ensure that Kismet is installed and accessible in your system's PATH.
-- **Go**: Ensure that Go is installed on your machine.
-- **Root access**: The program needs to be run with root privileges to interact with network interfaces.
+### Dependencies
 
-### Installing Kismet
+- **Kismet**: Wireless network detector and monitoring framework
+  - Must be installed and accessible in system PATH
+  - Visit [Kismet Official Website](https://kismetwireless.net/) for installation instructions
+- **Go**: Go programming language runtime (for building from source)
+- **Root Privileges**: Administrative access required for network interface manipulation
 
-To install Kismet, follow the instructions on the [official Kismet website](https://kismetwireless.net/).
+### Hardware Requirements
+
+- Compatible wireless network interface capable of monitor mode
+- Sufficient system resources for real-time signal processing
 
 ## Installation
 
-### Download the Latest Version
+### Binary Installation
 
-You can download the latest version of Rizzyscope from the [Releases](https://github.com/GobiasSomeCoffeeCo/rizzyscope/releases) page on GitHub. Download the binary for your operating system, extract it, and you’re ready to go.
+Download the latest pre-compiled binary from the [GitHub Releases](https://github.com/GobiasSomeCoffeeCo/rizzyscope/releases) page. Select the appropriate version for your operating system and architecture.
 
 ### Building from Source
 
-If you prefer, you can build Rizzyscope from source:
-
 1. **Clone the repository**:
-```bash
-git clone https://github.com/GobiasSomeCoffeeCo/rizzyscope.git
-cd rizzyscope
-```
-   
-Build the program:
 
-```bash
+   ```bash
+   git clone https://github.com/GobiasSomeCoffeeCo/rizzyscope.git
+   cd rizzyscope
+   ```
 
-go build -o rizzyscope
-```
-## Usage
-### Running the Program
+2. **Build the executable**:
 
-Rizzyscope can be run with either a configuration file or command-line arguments. If both are provided, command-line arguments will override the configuration file settings.
+   ```bash
+   go build -o rizzyscope
+   ```
 
-#### Example 1: Using a Configuration File
+## Configuration
 
-Create a config.toml file in the same directory as the executable:
+Rizzyscope supports configuration through TOML files with command-line override capabilities.
+
+### Configuration File Structure
+
+Create a `config.toml` file in the executable directory:
 
 ```toml
-
 [required]
-target_mac = ["12:34:56:AA:CC:EE","22:34:56:bb:cc:ee","554456BBCCEE","ab3423febc3d"]
+target_mac = ["12:34:56:AA:CC:EE", "22:34:56:bb:cc:ee", "554456BBCCEE", "ab3423febc3d"]
 interface = ["wlp0s20f0u2u3", "wlp0s20f0u2u4"]
 
 [optional]
-target_ssid = ["TPLink", "UrWifi", "MyWifi", "NotUrWifi"]
+target_ssid = ["NetworkName1", "NetworkName2", "NetworkName3"]
 kismet_endpoint = "127.0.0.1:2501"
 
-# Kismet Credentials
 [credentials]
-user = "test"
-password = "test"
+user = "kismet_user"
+password = "kismet_password"
 ```
-#### Run the program:
+
+### Configuration Parameters
+
+- **target_mac**: Array of MAC addresses to monitor (required)
+- **interface**: Network interfaces for monitoring (required)
+- **target_ssid**: Filter by specific network names (optional)
+- **kismet_endpoint**: Kismet server endpoint (default: 127.0.0.1:2501)
+- **credentials**: Kismet authentication credentials
+
+## Usage
+
+### Basic Operation
+
+**Using configuration file:**
 
 ```bash
-
 sudo ./rizzyscope
 ```
-#### Example 2: Overriding Config with Command-Line Arguments
 
-You can override the mac and interface settings using command-line arguments:
+**Command-line parameter override:**
 
 ```bash
-
-sudo ./rizzyscope -m 11:34:56:23:23:EE,22:34:56:BB:BB:EE,33:34:56:BB:BB:EE -i wlp0s20f0u2u3
+sudo ./rizzyscope -m 11:34:56:23:23:EE,22:34:56:BB:BB:EE -i wlp0s20f0u2u3
 ```
-#### Example 3: Specifying a Different Config File
 
-You can specify a different configuration file using the -c flag:
+**Custom configuration file:**
 
 ```bash
-
-sudo ./rizzyscope -c /path/to/your/config.toml
+sudo ./rizzyscope -c /path/to/custom/config.toml
 ```
-#### Example 4: Implement --skip-kismet flag to use existing Kismet instance
+
+**Using existing Kismet instance:**
 
 ```bash
-sudo ./rizzyscope --skip-kismet 
+sudo ./rizzyscope --skip-kismet
+# or
 sudo ./rizzyscope -k
-
 ```
-Configuration
 
-The program can be configured via a TOML file. The default configuration file is config.toml in the current directory.
-Configuration File Structure
+### Command-Line Options
 
-```toml
-[required]
-target_mac = ["12:34:56:AA:CC:EE","22:34:56:bb:cc:ee","554456BBCCEE","ab3423febc3d"] # Target MACs
-interface = ["wlp0s20f0u2u3", "wlp0s20f0u2u4"] # Supports multiple interfaces
+- `-m, --mac`: Specify target MAC addresses (comma-separated)
+- `-i, --interface`: Specify network interfaces (comma-separated)
+- `-c, --config`: Path to configuration file
+- `-k, --skip-kismet`: Use existing Kismet instance
+- `--help`: Display usage information
 
-[optional]
-target_ssid = ["TPLink", "UrWifi", "MyWifi", "NotUrWifi"] # Target by SSID
-kismet_endpoint = "127.0.0.1:2501" # Where you want to point the kismet enpoint
+## Operation Workflow
 
-# Kismet Credentials
-[credentials]
-user = "test"  # Your kismet username
-password = "test" # Your kismet password
+1. **Kismet Initialization**: Automatically launches Kismet on specified network interfaces
+2. **Target Discovery**: Queries Kismet API to locate specified MAC addresses
+3. **Channel Lock**: Locks network interface to target device's operating channel
+4. **Real-Time Monitoring**: Continuously displays RSSI values through terminal interface
 
-```
-## How It Works
+## Output Format
 
-- **Launch Kismet**: Rizzyscope automatically starts Kismet on the specified network interface.
-- **Search for MAC Address**: The program queries the Kismet API to find the specified MAC address.
-- **Lock to Channel**: Once the MAC address is detected, Rizzyscope locks the network interface to the appropriate channel.
-- **Real-Time RSSI Display**: The RSSI for the MAC address is displayed in real-time using a terminal-based progress bar.
+The application provides real-time RSSI monitoring through a terminal-based progress bar interface, displaying signal strength variations for tracked devices.
 
+## Use Cases
 
-## Output
+- **Network Security Auditing**: Identify unauthorized devices and monitor network access
+- **Wireless Troubleshooting**: Analyze signal strength and connectivity issues
+- **Research and Development**: Support wireless network research and testing
+- **Infrastructure Monitoring**: Track device presence and signal characteristics
 
-When running, the program will display a real-time progress bar in the terminal, representing the RSSI value of the specified MAC address.
+## Support and Contributions
 
-For questions or issues, please open an issue on the GitHub repository.
+For technical support, bug reports, or feature requests, please submit an issue through the [GitHub Issues](https://github.com/GobiasSomeCoffeeCo/rizzyscope/issues) page.
+
+## License
+
+Please refer to the LICENSE file in the repository for licensing information.
+
+## Disclaimer
+
+This tool is intended for legitimate network monitoring and security research purposes. Users are responsible for ensuring compliance with applicable laws and regulations regarding wireless network monitoring in their jurisdiction.
