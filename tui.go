@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,23 +25,28 @@ const (
 type tickMsg time.Time
 
 type Model struct {
-	progress       progress.Model
-	rssi           int
-	rssiData       []int
-	lockedTarget   *TargetItem
-	channel        string
-	ignoreList     []string
-	iface          []string
-	lastReceived   time.Time
-	kismet         *exec.Cmd
-	targets        []*TargetItem
-	channelLocked  bool
-	realTimeOutput []string
-	windowWidth    int
-	targetList     list.Model
-	kismetEndpoint string
-	kismetData     []string // Holds Kismet data to display
-	maxDataSize    int
+	progress         progress.Model
+	rssi             int
+	rssiData         []int
+	lockedTarget     *TargetItem
+	channel          string
+	ignoreList       []string
+	iface            []string
+	lastReceived     time.Time
+	kismet           *exec.Cmd
+	targets          []*TargetItem
+	channelLocked    bool
+	realTimeOutput   []string
+	windowWidth      int
+	targetList       list.Model
+	kismetEndpoint   string
+	kismetData       []string // Holds Kismet data to display
+	maxDataSize      int
+	lockedDeviceInfo *DeviceInfo // Current device info for locked target
+	clientScrollOffset int        // Scroll offset for client list
+	focusOnClients   bool         // Whether focus is on client list for scrolling
+	tempMessages     []string     // Temporary messages that disappear
+	tempMsgTimer     time.Time    // Timer for temp messages
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -56,13 +61,27 @@ func (m *Model) addRealTimeOutput(message string) {
 	}
 }
 
+// Add a temporary message that will disappear after a few seconds
+func (m *Model) addTempMessage(message string) {
+	m.tempMessages = append(m.tempMessages, message)
+	m.tempMsgTimer = time.Now()
+	if len(m.tempMessages) > 3 {
+		m.tempMessages = m.tempMessages[len(m.tempMessages)-3:]
+	}
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// TODO will need to handle multiple interfaces and bands they can support.
 	// The interface chosen has no logic behind whether it can support the channel passed by another network card
 	uuid, err := GetUUIDForInterface(m.iface[0], m.kismetEndpoint)
 	if err != nil {
 		log.Printf("Failed to get UUID: %v\n\rPlease check the config.toml and make sure your interface names are correct.", err)
-		os.Exit(1)
+		if m.kismet != nil {
+			if killErr := m.kismet.Process.Kill(); killErr != nil {
+				log.Printf("Unable to kill Kismet process: %v", killErr)
+			}
+		}
+		return m, tea.Quit
 	}
 
 	switch msg := msg.(type) {
@@ -76,7 +95,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Quit
-		case "up", "k", "down", "j":
+		case "tab":
+			// Toggle focus between target list and client list
+			if m.lockedTarget != nil && m.lockedDeviceInfo != nil && len(m.lockedDeviceInfo.AssociatedClients) > 0 {
+				m.focusOnClients = !m.focusOnClients
+			}
+			return m, nil
+		case "up", "k":
+			if m.focusOnClients && m.lockedTarget != nil && m.lockedDeviceInfo != nil && len(m.lockedDeviceInfo.AssociatedClients) > 0 {
+				// Scroll up in client list
+				if m.clientScrollOffset > 0 {
+					m.clientScrollOffset--
+				}
+				return m, nil
+			} else {
+				// Normal target list navigation
+				var cmd tea.Cmd
+				m.targetList, cmd = m.targetList.Update(msg)
+				return m, cmd
+			}
+		case "down", "j":
+			if m.focusOnClients && m.lockedTarget != nil && m.lockedDeviceInfo != nil && len(m.lockedDeviceInfo.AssociatedClients) > 0 {
+				// Scroll down in client list
+				maxVisibleClients := 8 // Adjust based on pane height
+				if m.clientScrollOffset < len(m.lockedDeviceInfo.AssociatedClients)-maxVisibleClients {
+					m.clientScrollOffset++
+				}
+				return m, nil
+			} else {
+				// Normal target list navigation
+				var cmd tea.Cmd
+				m.targetList, cmd = m.targetList.Update(msg)
+				return m, cmd
+			}
+		case "left", "h", "right", "l":
+			// Always allow target list navigation
 			var cmd tea.Cmd
 			m.targetList, cmd = m.targetList.Update(msg)
 			return m, cmd
@@ -89,19 +142,45 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				if selectedItem.IsIgnored() {
 					selectedItem.ToggleIgnore()
-					m.addRealTimeOutput(fmt.Sprintf("Target %s removed from ignore list.", displayValue))
-					m.addRealTimeOutput(fmt.Sprintf("Removed from ignore list? %v", selectedItem.Ignored))
+					m.addTempMessage(fmt.Sprintf("Un-ignored: %s", displayValue))
 				}
 
-				m.lockedTarget = selectedItem
-				m.lockedTarget.ChannelLocked = false
+				// If we're switching from a locked target, auto-ignore it and unlock the channel
+				if m.lockedTarget != nil && m.channelLocked {
+					// Auto-ignore the current target
+					m.lockedTarget.ToggleIgnore()
+					currentDisplay := m.lockedTarget.Value
+					if m.lockedTarget.TType == SSID && m.lockedTarget.OriginalValue != "" {
+						currentDisplay = m.lockedTarget.OriginalValue
+					}
+					m.addTempMessage(fmt.Sprintf("Auto-ignored: %s", currentDisplay))
+					
+					// Update the target in the main targets list
+					for _, target := range m.targets {
+						if (m.lockedTarget.TType == MAC && target.Value == m.lockedTarget.Value) ||
+							(m.lockedTarget.TType == SSID && target.OriginalValue == m.lockedTarget.OriginalValue) {
+							target.Ignored = true
+							break
+						}
+					}
+					
+					// Unlock the channel
+					err := hopChannel(uuid, m.kismetEndpoint)
+					if err != nil {
+						log.Printf("Error unlocking previous channel: %v", err)
+						m.addRealTimeOutput(fmt.Sprintf("Error unlocking previous channel: %v", err))
+					}
+				}
+
+				// Reset all target-related state and let discovery find the new target
+				m.lockedTarget = nil // Clear target to allow discovery logic to run
+				m.lockedDeviceInfo = nil 
 				m.channelLocked = false
-
-				err := hopChannel(uuid, m.kismetEndpoint)
-				if err != nil {
-					log.Printf("Error hopping channel: %v", err)
-					m.addRealTimeOutput(fmt.Sprintf("Error hopping channel: %v", err))
-				}
+				m.clientScrollOffset = 0
+				m.focusOnClients = false
+				m.rssi = MinRSSI
+				m.channel = ""
+				m.lastReceived = time.Now()
 
 				m.addRealTimeOutput(fmt.Sprintf("Searching for target %s...", displayValue))
 			}
@@ -113,12 +192,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.lockedTarget.TType == SSID {
 					displayValue = m.lockedTarget.OriginalValue
 				}
-				action := "added to"
-				if !m.lockedTarget.IsIgnored() {
-					action = "removed from"
+				if m.lockedTarget.IsIgnored() {
+					m.addTempMessage(fmt.Sprintf("Ignored: %s", displayValue))
+				} else {
+					m.addTempMessage(fmt.Sprintf("Un-ignored: %s", displayValue))
 				}
-
-				m.addRealTimeOutput(fmt.Sprintf("Target %s %s ignore list", displayValue, action))
 				for _, target := range m.targets {
 					if (m.lockedTarget.TType == MAC && target.Value == m.lockedTarget.Value) ||
 						(m.lockedTarget.TType == SSID && target.OriginalValue == m.lockedTarget.OriginalValue) {
@@ -127,8 +205,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.lockedTarget = nil
+				m.lockedDeviceInfo = nil
 				m.channel = ""
-				m.addRealTimeOutput("Continuing search for new target...")
+				m.clientScrollOffset = 0
+				m.focusOnClients = false
+				m.addRealTimeOutput("Searching for new target...")
 				m.channelLocked = false
 			}
 			err := hopChannel(uuid, m.kismetEndpoint)
@@ -150,6 +231,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// Clear temporary messages after 3 seconds
+		if time.Since(m.tempMsgTimer) > 3*time.Second {
+			m.tempMessages = []string{}
+		}
+		
 		devices, err := FetchAllDevices(m.kismetEndpoint)
 		m.addKismetData(devices)
 		if err == nil {
@@ -175,6 +261,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rssi = deviceInfo.RSSI
 				m.channel = deviceInfo.Channel
 				m.lastReceived = time.Now()
+				m.lockedDeviceInfo = deviceInfo // Store device info for display
 
 				// Lock the channel if not already locked
 				if !m.channelLocked {
@@ -222,10 +309,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(tickCmd(), m.progress.IncrPercent(0))
 
-	// case progress.FrameMsg:
-	// 	progressModel, cmd := m.progress.Update(msg)
-	// 	m.progress = progressModel.(progress.Model)
-	// 	return m, cmd
+	case progress.FrameMsg:
+		progressModel, cmd := m.progress.Update(msg)
+		m.progress = progressModel.(progress.Model)
+		return m, cmd
 
 	default:
 		return m, nil
@@ -256,7 +343,6 @@ func (m *Model) addKismetData(data []map[string]interface{}) {
 }
 
 func (m *Model) View() string {
-
 	topPaneWidth := m.windowWidth / 2
 
 	topLeft := m.renderTargetListWithHelp(topPaneWidth)
@@ -278,12 +364,27 @@ func (m *Model) View() string {
 
 	var bottomLeft string
 	if m.lockedTarget == nil || !m.channelLocked {
-		bottomLeft = renderRealTimePane("Searching for target(s)...", m.realTimeOutput, topPaneWidth)
+		// Combine temp messages with real-time output when searching
+		allMessages := append(m.tempMessages, m.realTimeOutput...)
+		bottomLeft = renderRealTimePane("Searching for target(s)...", allMessages, topPaneWidth)
 	} else {
-		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", targetDisplay), m.realTimeOutput, topPaneWidth)
+		// When locked, show target info + temp messages
+		var targetInfo []string
+		if m.lockedDeviceInfo != nil {
+			targetInfo = []string{
+				fmt.Sprintf("Channel: %s", m.lockedDeviceInfo.Channel),
+				fmt.Sprintf("Make: %s", m.lockedDeviceInfo.Manufacturer),
+				fmt.Sprintf("SSID: %s", m.lockedDeviceInfo.SSID),
+				fmt.Sprintf("Encryption: %s", m.lockedDeviceInfo.Crypt),
+				fmt.Sprintf("Type: %s", m.lockedDeviceInfo.Type),
+			}
+		}
+		// Add temp messages at the top, then target info
+		allMessages := append(m.tempMessages, targetInfo...)
+		bottomLeft = renderRealTimePane(fmt.Sprintf("Locked to target: %s", targetDisplay), allMessages, topPaneWidth)
 	}
 
-	bottomRight := renderKismetPane("Kismet Real-Time Data", m.kismetData, topPaneWidth)
+	bottomRight := m.renderLockedTargetPane(topPaneWidth)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, topRight)
 	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, bottomLeft, bottomRight)
 
@@ -299,10 +400,10 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 	}
 
 	maxRSSI, minRSSI := -30, -120
-	height := 7
+	height := 8
 
 	// Adjust maxPoints to account for the left wall and make sure the dots don't disappear prematurely
-	maxPoints := width - 20
+	maxPoints := width - 30
 
 	// Top border of the chart
 	builder.WriteString("     ┌")
@@ -354,6 +455,7 @@ func (m *Model) renderRSSIOverTimeChart(width int) string {
 		BorderForeground(lipgloss.Color("63")).
 		Padding(1, 2).
 		Width(width - 4).
+		Height(8).
 		Render(builder.String())
 }
 
@@ -384,7 +486,8 @@ func (m *Model) renderTargetListWithHelp(width int) string {
 // Render custom help text
 func renderCustomHelpText() string {
 	help := `
-↑/k up • ↓/j down 
+↑/k up • ↓/j down (navigate)
+[Tab] Focus client list
 [Enter] Search for targets
 [i] Ignore current target 
 [q/Ctrl+C] Quit`
@@ -426,6 +529,99 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func (m *Model) renderLockedTargetPane(width int) string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(width - 4).
+		Height(13)
+
+	var title string
+	var content []string
+
+	if m.lockedTarget == nil {
+		title = "Target Information"
+		content = []string{"No target locked"}
+	} else if m.lockedDeviceInfo == nil {
+		title = "Target Information"
+		content = []string{"Fetching target details..."}
+	} else {
+		if m.focusOnClients {
+			title = "Associated Clients [FOCUSED]"
+		} else {
+			title = "Associated Clients"
+		}
+
+		// Display basic target info (non-duplicate)
+		targetDisplay := m.lockedTarget.Value
+		if m.lockedTarget.TType == SSID && m.lockedTarget.OriginalValue != "" {
+			targetDisplay = m.lockedTarget.OriginalValue
+		}
+
+		content = []string{
+			fmt.Sprintf("Target: %s", targetDisplay),
+			"",
+		}
+
+		// Display associated clients with sorting and scrolling
+		if len(m.lockedDeviceInfo.AssociatedClients) > 0 {
+			// Sort client MACs for consistent ordering
+			var sortedClients []string
+			for clientMac := range m.lockedDeviceInfo.AssociatedClients {
+				sortedClients = append(sortedClients, clientMac)
+			}
+			sort.Strings(sortedClients)
+
+			maxVisibleClients := 8 // Available lines in pane
+			totalClients := len(sortedClients)
+
+			// Calculate visible range based on scroll offset
+			startIdx := m.clientScrollOffset
+			endIdx := startIdx + maxVisibleClients
+			if endIdx > totalClients {
+				endIdx = totalClients
+			}
+
+			// Add scroll indicators
+			if startIdx > 0 {
+				content = append(content, "↑ Scroll up for more")
+			}
+
+			// Display visible clients
+			for i := startIdx; i < endIdx; i++ {
+				content = append(content, fmt.Sprintf("  %s", sortedClients[i]))
+			}
+
+			// Add bottom scroll indicator
+			if endIdx < totalClients {
+				content = append(content, fmt.Sprintf("↓ %d more clients", totalClients-endIdx))
+			}
+
+			// Add client count info
+			if totalClients > maxVisibleClients {
+				content = append(content, "", fmt.Sprintf("Total: %d clients", totalClients))
+			}
+		} else {
+			content = append(content, "No associated clients")
+		}
+
+		// Add navigation hint when clients are present
+		if len(m.lockedDeviceInfo.AssociatedClients) > 8 {
+			if m.focusOnClients {
+				content = append(content, "", "Use ↑/↓ to scroll")
+			} else {
+				content = append(content, "", "Press Tab to focus & scroll")
+			}
+		}
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Render(title)
+	body := lipgloss.NewStyle().Render(strings.Join(content, "\n"))
+
+	return style.Render(header + "\n" + body)
 }
 
 func renderKismetPane(title string, data []string, width int) string {

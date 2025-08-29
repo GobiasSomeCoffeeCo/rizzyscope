@@ -18,15 +18,20 @@ type TargetItem struct {
 }
 
 func (i TargetItem) Title() string {
+	var title string
 	if i.TType == MAC {
-		return "MAC: " + i.Value
+		title = "MAC: " + i.Value
+	} else if i.TType == SSID && i.OriginalValue != "" {
+		title = "SSID: " + i.OriginalValue
+	} else {
+		title = "SSID: " + i.Value
 	}
-
-	if i.TType == SSID && i.OriginalValue != "" {
-		return "SSID: " + i.OriginalValue
+	
+	if i.Ignored {
+		title += " [IGNORED]"
 	}
-
-	return "SSID: " + i.Value
+	
+	return title
 }
 
 func (i TargetItem) Description() string { return "" }

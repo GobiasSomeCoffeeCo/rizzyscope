@@ -5,8 +5,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -35,6 +37,18 @@ func formatMAC(mac string) (string, error) {
 		cleanMAC[6:8], cleanMAC[8:10], cleanMAC[10:12]))
 
 	return formattedMAC, nil
+}
+
+func cleanup(kismetProcess *exec.Cmd) {
+	if kismetProcess != nil && kismetProcess.Process != nil {
+		log.Printf("Cleaning up: killing Kismet process...")
+		if err := kismetProcess.Process.Kill(); err != nil {
+			log.Printf("Error killing Kismet process: %v", err)
+		} else {
+			kismetProcess.Wait() // Wait for process to fully terminate
+			log.Printf("Kismet process terminated.")
+		}
+	}
 }
 
 func main() {
@@ -106,18 +120,23 @@ func main() {
 	}
 
 	m := Model{
-		progress:       progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
-		rssi:           MinRSSI,
-		lastReceived:   time.Now(),
-		targets:        targets,
-		iface:          viper.GetStringSlice("required.interface"),
-		realTimeOutput: []string{},
-		ignoreList:     []string{},
-		windowWidth:    80,
-		targetList:     list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
-		kismetEndpoint: viper.GetString("optional.kismet_endpoint"),
-		kismetData:     make([]string, 0),
-		maxDataSize:    10,
+		progress:           progress.New(progress.WithGradient("#ff5555", "#50fa7b"), progress.WithoutPercentage()),
+		rssi:               MinRSSI,
+		lastReceived:       time.Now(),
+		targets:            targets,
+		iface:              viper.GetStringSlice("required.interface"),
+		realTimeOutput:     []string{},
+		ignoreList:         []string{},
+		windowWidth:        80,
+		targetList:         list.New([]list.Item{}, list.NewDefaultDelegate(), 40, 10),
+		kismetEndpoint:     viper.GetString("optional.kismet_endpoint"),
+		kismetData:         make([]string, 0),
+		maxDataSize:        10,
+		lockedDeviceInfo:   nil,
+		clientScrollOffset: 0,
+		focusOnClients:     false,
+		tempMessages:       []string{},
+		tempMsgTimer:       time.Now(),
 	}
 
 	if *skipKismet {
@@ -132,11 +151,27 @@ func main() {
 		m.kismet = kismet
 	}
 
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	// Defer cleanup to ensure Kismet is killed on any exit
+	defer cleanup(m.kismet)
+
 	time.Sleep(3 * time.Second)
 	clearScreen()
 
+	// Handle signals in a goroutine
+	go func() {
+		<-sigChan
+		log.Printf("Received interrupt signal, cleaning up...")
+		cleanup(m.kismet)
+		os.Exit(0)
+	}()
+
 	if _, err := tea.NewProgram(&m).Run(); err != nil {
 		fmt.Println("Error:", err)
+		cleanup(m.kismet)
 		os.Exit(1)
 	}
 }
